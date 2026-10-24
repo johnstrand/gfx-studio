@@ -1,4 +1,5 @@
 using GfxStudio.Core.Parsing.Ast;
+using GfxStudio.Core.Functions;
 using GfxStudio.Core.Primitives;
 using GfxStudio.Core.Randomness;
 
@@ -110,7 +111,6 @@ public static class BuiltInConstants
 /// <summary>Holds the state and environment for evaluating a .gfx document during a render pass.</summary>
 public sealed class EvaluationContext
 {
-    private readonly Dictionary<string, IGfxCallable> _functions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, GfxValue> _variables = new(StringComparer.Ordinal);
 
     public EvaluationContext(
@@ -118,18 +118,20 @@ public sealed class EvaluationContext
         RunContext run = default,
         FrameContext frame = default,
         IGfxRandom? random = null,
-        IEnumerable<IGfxCallable>? functions = null)
+        IEnumerable<IGfxCallable>? functions = null,
+        GfxFunctionRegistry? functionRegistry = null)
     {
         Document = document;
         Run = run.Count <= 0 ? new RunContext(0, 1, 0) : run;
         Frame = frame.Count <= 0 ? new FrameContext(0, 1, 15.0) : frame;
         Random = random ?? new GfxRandom(Run.Seed);
+        FunctionRegistry = functionRegistry ?? GfxFunctionRegistry.CreateDefault();
 
         if (functions is not null)
         {
             foreach (var fn in functions)
             {
-                _functions[fn.Name] = fn;
+                FunctionRegistry.Register(fn);
             }
         }
     }
@@ -142,14 +144,15 @@ public sealed class EvaluationContext
 
     public IGfxRandom Random { get; set; }
 
-    public IReadOnlyDictionary<string, IGfxCallable> Functions => _functions;
+    public GfxFunctionRegistry FunctionRegistry { get; }
+
+    public IReadOnlyDictionary<string, IGfxCallable> Functions => FunctionRegistry.Functions;
 
     public IReadOnlyDictionary<string, GfxValue> Variables => _variables;
 
     public void RegisterFunction(IGfxCallable callable)
     {
-        ArgumentNullException.ThrowIfNull(callable);
-        _functions[callable.Name] = callable;
+        FunctionRegistry.Register(callable);
     }
 
     public void SetVariable(string name, GfxValue value)
@@ -160,5 +163,5 @@ public sealed class EvaluationContext
     }
 
     public bool TryGetFunction(string name, out IGfxCallable callable) =>
-        _functions.TryGetValue(name, out callable!);
+        FunctionRegistry.TryGetFunction(name, out callable!);
 }

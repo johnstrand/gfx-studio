@@ -571,9 +571,14 @@ public sealed class GfxEvaluator
         }
 
         var evaluatedArgs = new List<GfxValue>(call.Arguments.Count);
-        foreach (var argExpr in call.Arguments)
+        for (var argumentIndex = 0; argumentIndex < call.Arguments.Count; argumentIndex++)
         {
-            var argVal = EvaluateExprInternal(argExpr, currentPathPrefix, isMemberTarget: false);
+            var argExpr = call.Arguments[argumentIndex];
+            // Inline object/array arguments need their own memoization namespace. Reusing the
+            // caller's property prefix makes distinct objects such as color-ramp stops share
+            // child cache paths (for example, both can otherwise resolve as "ramp.pos").
+            var argumentPathPrefix = $"{currentPathPrefix ?? "$root"}.$call@{call.Span.Start.Offset}.arg{argumentIndex}";
+            var argVal = EvaluateExprInternal(argExpr, argumentPathPrefix, isMemberTarget: false);
             if (argVal is null)
             {
                 return null;
