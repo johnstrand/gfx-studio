@@ -7,4 +7,7 @@
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Fonts\Roboto.ttf" LogicalName="GfxStudio.Core.Resources.Fonts.Roboto.ttf" />
+  </ItemGroup>
 </Project>
