@@ -1,3 +1,5 @@
+using GfxStudio.Core.Rendering.Layers;
+
 namespace GfxStudio.Core.Rendering;
 
 /// <summary>Registry of available <see cref="ILayerRenderer"/> implementations keyed by layer type.</summary>
@@ -13,6 +15,7 @@ public sealed class LayerRendererRegistry
     public static LayerRendererRegistry CreateDefault(IEnumerable<ILayerRenderer>? additionalRenderers = null)
     {
         var registry = new LayerRendererRegistry();
+        registry.Register(new FillLayerRenderer());
         if (additionalRenderers is not null)
         {
             foreach (var renderer in additionalRenderers)
