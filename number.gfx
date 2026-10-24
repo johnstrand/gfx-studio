@@ -1,0 +1,24 @@
+layers = {
+  layer0 = {
+    type = fill
+    color = rgb(0, 255, 255)
+  }
+  layer1 = {
+    type = fractal_clouds
+    color = color_ramp(NAMED_COLORS.WHITE, NAMED_COLORS.BLACK)
+    mix = multiply
+    size = output.dimensions
+  }
+  layer2 = {
+    type = text
+    size = output.dimensions
+    text = floor(random(0, 10))
+    font_size = 48
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.CENTER }
+  }
+}
+
+output = {
+  dimensions = { width = 64, height = 64 }
+  filename = "worn_number_${run.number:0000}.png"
+}
