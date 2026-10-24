@@ -120,7 +120,7 @@ public sealed class CompositorTests
         result.HasErrors.Should().BeTrue();
         var diag = result.Diagnostics.Should().ContainSingle(d => d.Code == "RND004").Subject;
         diag.Message.Should().Contain("unknown_layer");
-        diag.Message.Should().Contain("fill, test_solid, text");
+        diag.Message.Should().Contain("fill").And.Contain("test_solid").And.Contain("text");
     }
 
     [Fact]

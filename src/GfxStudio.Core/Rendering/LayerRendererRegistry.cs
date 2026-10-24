@@ -16,6 +16,7 @@ public sealed class LayerRendererRegistry
     {
         var registry = new LayerRendererRegistry();
         registry.Register(new FillLayerRenderer());
+        registry.Register(new FractalCloudsLayerRenderer());
         if (additionalRenderers is not null)
         {
             foreach (var renderer in additionalRenderers)
