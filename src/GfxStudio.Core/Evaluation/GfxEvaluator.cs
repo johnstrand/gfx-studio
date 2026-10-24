@@ -3,6 +3,7 @@ using GfxStudio.Core.Diagnostics;
 using GfxStudio.Core.Parsing;
 using GfxStudio.Core.Parsing.Ast;
 using GfxStudio.Core.Primitives;
+using GfxStudio.Core.Randomness;
 
 namespace GfxStudio.Core.Evaluation;
 
@@ -20,6 +21,7 @@ public sealed record EvaluationResult<T>(
 public sealed class GfxEvaluator
 {
     private readonly EvaluationContext _context;
+    private readonly DeterministicSeedProvider? _seedProvider;
     private readonly List<GfxDiagnostic> _diagnostics = [];
     private readonly Dictionary<string, PropertyAssignmentNode> _rootAstProperties = new(StringComparer.Ordinal);
     private readonly List<string> _rootOrderedKeys = [];
@@ -27,10 +29,11 @@ public sealed class GfxEvaluator
     private readonly List<string> _evaluationStack = [];
     private readonly HashSet<string> _activePaths = new(StringComparer.Ordinal);
 
-    public GfxEvaluator(EvaluationContext context)
+    public GfxEvaluator(EvaluationContext context, DeterministicSeedProvider? seedProvider = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         _context = context;
+        _seedProvider = seedProvider;
 
         if (context.Document is not null)
         {
@@ -204,6 +207,13 @@ public sealed class GfxEvaluator
         }
 
         _evaluationStack.Add(fullPath);
+        var previousRandom = _context.Random;
+        if (_seedProvider is not null && parentPathPrefix == "layers")
+        {
+            var layerId = fullPath["layers.".Length..];
+            _context.Random = _seedProvider.CreateRandom(_context.Run.Number, _context.Frame.Number, $"{layerId}:props");
+        }
+
         try
         {
             var rawValue = EvaluateExprInternal(node.Value, fullPath, isMemberTarget: false);
@@ -223,6 +233,7 @@ public sealed class GfxEvaluator
         }
         finally
         {
+            _context.Random = previousRandom;
             _evaluationStack.RemoveAt(_evaluationStack.Count - 1);
             _activePaths.Remove(fullPath);
         }
