@@ -129,6 +129,17 @@ public sealed class OutputConfigBinder
         }
 
         var fps = ReadPositiveDouble(document, evaluator, "output.fps", 15.0, diagnostics, span);
+        if (options.FpsOverride is { } fpsOverride)
+        {
+            if (double.IsFinite(fpsOverride) && fpsOverride > 0.0)
+            {
+                fps = fpsOverride;
+            }
+            else
+            {
+                diagnostics.Add(Error("OUT021", "Frame-rate override must be a positive finite number.", span));
+            }
+        }
         int? frameDelayMs = null;
         if (EvaluateIfDeclared(document, evaluator, "output.frame_delay_ms") is { } delayVal)
         {

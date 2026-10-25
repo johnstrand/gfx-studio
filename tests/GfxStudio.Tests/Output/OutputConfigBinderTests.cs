@@ -1,10 +1,34 @@
 using FluentAssertions;
 using GfxStudio.Core.Output;
+using GfxStudio.Core.Parsing;
 
 namespace GfxStudio.Tests.Output;
 
 public sealed class OutputConfigBinderTests
 {
+    [Fact]
+    public void Bind_AppliesFrameRateOverride()
+    {
+        const string source = """
+            layers = {
+              layer0 = { type = fill, color = NAMED_COLORS.WHITE }
+            }
+            output = {
+              dimensions = { width = 2, height = 2 }
+              filename = "fps.gif"
+              mode = animation_gif
+              frames = 2
+              fps = 12
+            }
+            """;
+
+        var document = GfxParser.Parse(source).Document!;
+        var bindResult = new OutputConfigBinder().Bind(document, options: new RenderOptions { FpsOverride = 24.0 });
+
+        bindResult.HasErrors.Should().BeFalse();
+        bindResult.Config!.Fps.Should().Be(24.0);
+    }
+
     [Theory]
     [InlineData("layers = { layer0 = { type = fill } }", "OUT001")]
     [InlineData("layers = { layer0 = { type = fill } }\noutput = { dimensions = { width = 0, height = 10 }, filename = \"out.png\" }", "OUT001")]

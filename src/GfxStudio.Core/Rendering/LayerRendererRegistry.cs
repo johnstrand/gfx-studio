@@ -1,4 +1,5 @@
 using GfxStudio.Core.Rendering.Layers;
+using GfxStudio.Core.Rendering.Layers.Shapes;
 
 namespace GfxStudio.Core.Rendering;
 
@@ -18,6 +19,13 @@ public sealed class LayerRendererRegistry
         registry.Register(new FillLayerRenderer());
         registry.Register(new FractalCloudsLayerRenderer());
         registry.Register(new TextLayerRenderer());
+        registry.Register(new GradientLayerRenderer());
+        registry.Register(new RectLayerRenderer());
+        registry.Register(new CircleLayerRenderer());
+        registry.Register(new CircleLayerRenderer("ellipse"));
+        registry.Register(new LineLayerRenderer());
+        registry.Register(new PolygonLayerRenderer());
+        registry.Register(new PolygonLayerRenderer("star"));
         if (additionalRenderers is not null)
         {
             foreach (var renderer in additionalRenderers)

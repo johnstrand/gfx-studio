@@ -13,6 +13,8 @@ public sealed class RenderOptions
 
     public int? FrameCountOverride { get; init; }
 
+    public double? FpsOverride { get; init; }
+
     public int? StartIndexOverride { get; init; }
 
     public int? MaxDegreeOfParallelism { get; init; }

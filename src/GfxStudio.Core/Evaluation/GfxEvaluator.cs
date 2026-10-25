@@ -28,6 +28,7 @@ public sealed class GfxEvaluator
     private readonly Dictionary<string, GfxValue> _resolvedPathCache = new(StringComparer.Ordinal);
     private readonly List<string> _evaluationStack = [];
     private readonly HashSet<string> _activePaths = new(StringComparer.Ordinal);
+    private int _arrayEvaluationScope;
 
     public GfxEvaluator(EvaluationContext context, DeterministicSeedProvider? seedProvider = null)
     {
@@ -326,9 +327,15 @@ public sealed class GfxEvaluator
     private GfxValue? EvaluateArray(ArrayExpr array, string? currentPathPrefix)
     {
         var items = new List<GfxValue>(array.Elements.Count);
+        var arrayScope = _arrayEvaluationScope++;
         for (var i = 0; i < array.Elements.Count; i++)
         {
-            var item = EvaluateExprInternal(array.Elements[i], currentPathPrefix, isMemberTarget: false);
+            // Array entries can contain object blocks with identically named properties (e.g. points[i].x).
+            // Give each entry a distinct evaluation-cache scope so one entry cannot reuse another's `x`/`y` values.
+            var itemPathPrefix = currentPathPrefix is null
+                ? $"__array_{arrayScope}_{i}"
+                : $"{currentPathPrefix}.__array_{arrayScope}_{i}";
+            var item = EvaluateExprInternal(array.Elements[i], itemPathPrefix, isMemberTarget: false);
             if (item is null)
             {
                 return null;
