@@ -12,6 +12,9 @@ public sealed class SpiralLayerRenderer : ILayerRenderer
 {
     public string LayerType => "spiral";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["style", "arms", "branches", "tightness", "twist", "phase", "center", "color", "background"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

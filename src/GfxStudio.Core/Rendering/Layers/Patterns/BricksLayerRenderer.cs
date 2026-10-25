@@ -14,6 +14,24 @@ public sealed class BricksLayerRenderer : ILayerRenderer
 {
     public string LayerType => "bricks";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+    [
+        "brick_width",
+        "brick_height",
+        "brick_size",
+        "mortar_width",
+        "mortar",
+        "mortar_color",
+        "bond",
+        "style",
+        "row_offset",
+        "bevel",
+        "color_variation",
+        "variation",
+        "color",
+        "background"
+    ];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

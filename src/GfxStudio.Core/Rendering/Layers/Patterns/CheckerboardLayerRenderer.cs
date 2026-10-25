@@ -12,6 +12,9 @@ public sealed class CheckerboardLayerRenderer : ILayerRenderer
 {
     public string LayerType => "checkerboard";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["tile_size", "cell_size", "color1", "color2", "color", "background"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

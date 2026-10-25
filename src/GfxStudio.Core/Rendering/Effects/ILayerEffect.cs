@@ -62,6 +62,8 @@ public interface ILayerEffect
 {
     string EffectType { get; }
 
+    IReadOnlyCollection<string> SupportedProperties => [];
+
     void Apply(SKBitmap target, EffectContext context);
 }
 
@@ -146,6 +148,8 @@ public sealed class EffectAdjustmentLayerRenderer : ILayerRenderer
     }
 
     public string LayerType => _effect.EffectType;
+
+    public IReadOnlyCollection<string> SupportedProperties => _effect.SupportedProperties;
 
     public ILayerEffect Effect => _effect;
 

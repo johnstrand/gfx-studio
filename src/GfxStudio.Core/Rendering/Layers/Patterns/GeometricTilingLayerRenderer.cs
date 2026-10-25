@@ -14,6 +14,21 @@ public sealed class GeometricTilingLayerRenderer(string layerType = "tiling", st
 {
     public string LayerType { get; } = layerType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+    [
+        "style",
+        "pattern",
+        "cell_size",
+        "size",
+        "line_width",
+        "stroke_width",
+        "stroke_color",
+        "color",
+        "fill_color",
+        "color_variation",
+        "variation"
+    ];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

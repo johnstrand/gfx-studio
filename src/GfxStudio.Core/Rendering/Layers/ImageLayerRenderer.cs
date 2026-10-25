@@ -20,6 +20,8 @@ public sealed class ImageLayerRenderer : ILayerRenderer
 
     public string LayerType => "image";
 
+    public IReadOnlyCollection<string> SupportedProperties => ["source", "path", "crop", "fit", "resample", "tile_offset"];
+
     public GfxImageCache Cache => _cache;
 
     public SKBitmap RenderLayer(LayerRenderContext context)

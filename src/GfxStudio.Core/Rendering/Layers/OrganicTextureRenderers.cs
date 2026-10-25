@@ -20,6 +20,9 @@ public sealed class WoodLayerRenderer : ILayerRenderer
 
     public string LayerType => "wood";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["rings", "frequency", "turbulence", "warp_strength", "grain", "scale", "angle", "rotation", "color"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -93,6 +96,9 @@ public sealed class MarbleLayerRenderer : ILayerRenderer
 
     public string LayerType => "marble";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["veins", "frequency", "turbulence", "warp_strength", "scale", "octaves", "sharpness", "angle", "rotation", "phase", "color"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -158,6 +164,9 @@ public sealed class CausticsLayerRenderer : ILayerRenderer
     ]);
 
     public string LayerType => "caustics";
+
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["scale", "frequency", "sharpness", "phase", "color"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -228,6 +237,9 @@ public sealed class FlowFieldLayerRenderer(string layerType = "flow_field") : IL
 
     public string LayerType { get; } = layerType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["scale", "octaves", "steps", "iterations", "step_size", "strength", "phase", "color"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -295,6 +307,9 @@ public sealed class StarfieldLayerRenderer : ILayerRenderer
 {
     public string LayerType => "starfield";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["count", "stars", "density", "nebula", "min_size", "min_radius", "max_size", "max_radius", "glow", "twinkle", "phase", "background", "color"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -303,12 +318,18 @@ public sealed class StarfieldLayerRenderer : ILayerRenderer
         var width = bitmap.Width;
         var height = bitmap.Height;
         var defaultCount = Math.Clamp((width * height) / 48, 20, 2000);
+        if (context.LayerProperties.TryGetProperty("density", out var dVal) && dVal.TryCoerceToDouble(out var dNum) && dNum > 0.0)
+        {
+            defaultCount = Math.Clamp((int)(width * height * dNum), 1, 20000);
+        }
+
         var count = Math.Clamp((int)BricksLayerRenderer.ResolveDouble(context, "count", "stars", defaultValue: defaultCount), 1, 20000);
         var minRadius = Math.Max(0.3, BricksLayerRenderer.ResolveDouble(context, "min_size", "min_radius", defaultValue: 0.5));
         var maxRadius = Math.Max(minRadius, BricksLayerRenderer.ResolveDouble(context, "max_size", "max_radius", defaultValue: 2.2));
         var glow = Math.Clamp(BricksLayerRenderer.ResolveDouble(context, "glow", null, defaultValue: 0.6), 0.0, 2.0);
         var twinkle = Math.Clamp(BricksLayerRenderer.ResolveDouble(context, "twinkle", null, defaultValue: 0.3), 0.0, 1.0);
         var phase = BricksLayerRenderer.ResolveDouble(context, "phase", null, defaultValue: 0.0);
+        var nebula = Math.Clamp(BricksLayerRenderer.ResolveDouble(context, "nebula", null, defaultValue: 0.0), 0.0, 1.0);
 
         var bgColor = CheckerboardLayerRenderer.ResolveColor(context, "background", new ColorRgba(6, 9, 20, 255));
         var baseStarColor = CheckerboardLayerRenderer.ResolveColor(context, "color", ColorRgba.White);
@@ -320,6 +341,33 @@ public sealed class StarfieldLayerRenderer : ILayerRenderer
 
         using var canvas = new SKCanvas(bitmap);
         canvas.Clear(bgColor.ToSKColor());
+
+        if (nebula > 0.0)
+        {
+            var nebulaNoise = new PerlinNoise(context.Random);
+            var nebulaFbm = new FractalBrownianMotion(nebulaNoise, 4, 0.5, 2.0);
+            var nebInvW = width > 0 ? 3.0 / width : 0.0;
+            var nebInvH = height > 0 ? 3.0 / height : 0.0;
+            for (var ny = 0; ny < height; ny++)
+            {
+                var nRow = ny * nebInvH;
+                for (var nx = 0; nx < width; nx++)
+                {
+                    var nSample = nebulaFbm.Sample3D(nx * nebInvW, nRow, phase);
+                    if (nSample > 0.2)
+                    {
+                        var nebAlpha = (byte)Math.Clamp(Math.Round((nSample - 0.2) * 1.25 * nebula * 60.0), 0, 120);
+                        var basePix = bitmap.GetPixel(nx, ny);
+                        var nebCol = new SKColor(
+                            (byte)Math.Min(255, basePix.Red + (nebAlpha * 40 / 255)),
+                            (byte)Math.Min(255, basePix.Green + (nebAlpha * 20 / 255)),
+                            (byte)Math.Min(255, basePix.Blue + (nebAlpha * 80 / 255)),
+                            255);
+                        bitmap.SetPixel(nx, ny, nebCol);
+                    }
+                }
+            }
+        }
 
         using var corePaint = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill };
         using var glowPaint = new SKPaint { IsAntialias = true, Style = SKPaintStyle.Fill };

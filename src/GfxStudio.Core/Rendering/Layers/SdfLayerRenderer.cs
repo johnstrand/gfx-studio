@@ -15,6 +15,42 @@ public sealed class SdfLayerRenderer : ILayerRenderer
 {
     public string LayerType => "sdf";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+    [
+        "color",
+        "fill_color",
+        "stroke_color",
+        "stroke_width",
+        "glow_color",
+        "glow_radius",
+        "glow",
+        "background",
+        "mode",
+        "style",
+        "bands",
+        "contours",
+        "shapes",
+        "shape",
+        "primitive",
+        "center",
+        "radius",
+        "size",
+        "width",
+        "height",
+        "corner_radius",
+        "rotation",
+        "vertices",
+        "inner_radius",
+        "thickness",
+        "start",
+        "end",
+        "op",
+        "operation",
+        "smoothness",
+        "k",
+        "onion"
+    ];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

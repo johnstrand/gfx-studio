@@ -13,6 +13,9 @@ public sealed class WavesLayerRenderer : ILayerRenderer
 {
     public string LayerType => "waves";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["style", "wave_type", "frequency", "scale", "angle", "rotation", "phase", "sources", "count", "color", "background"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

@@ -11,6 +11,9 @@ public sealed class TextLayerRenderer : ILayerRenderer
 
     public string LayerType => "text";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["text", "font_size", "color", "align", "font_family", "font_path", "stroke_color", "stroke_width"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

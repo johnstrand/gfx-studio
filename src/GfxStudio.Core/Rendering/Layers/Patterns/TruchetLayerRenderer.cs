@@ -13,6 +13,9 @@ public sealed class TruchetLayerRenderer : ILayerRenderer
 {
     public string LayerType => "truchet";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["cell_size", "tile_size", "style", "pattern", "line_width", "width", "color", "background"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

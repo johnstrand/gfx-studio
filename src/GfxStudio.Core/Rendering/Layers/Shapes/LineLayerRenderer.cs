@@ -8,6 +8,9 @@ public sealed class LineLayerRenderer : ILayerRenderer
 {
     public string LayerType => "line";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["color", "stroke_color", "start", "end", "width", "stroke_width"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

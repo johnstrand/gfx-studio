@@ -9,6 +9,9 @@ public sealed class PolygonLayerRenderer(string layerType = "polygon") : ILayerR
 {
     public string LayerType { get; } = layerType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["points", "sides", "radius", "center", "rotation", "inner_radius", "fill_color", "color", "stroke_color", "stroke_width"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

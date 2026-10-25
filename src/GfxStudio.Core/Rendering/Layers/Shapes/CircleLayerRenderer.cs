@@ -8,6 +8,9 @@ public sealed class CircleLayerRenderer(string layerType = "circle") : ILayerRen
 {
     public string LayerType { get; } = layerType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["fill_color", "color", "stroke_color", "center", "radius", "radii", "stroke_width"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

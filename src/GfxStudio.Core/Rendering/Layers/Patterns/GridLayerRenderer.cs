@@ -11,6 +11,9 @@ public sealed class GridLayerRenderer : ILayerRenderer
 {
     public string LayerType => "grid";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["cell_size", "tile_size", "line_width", "thickness", "color", "background"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

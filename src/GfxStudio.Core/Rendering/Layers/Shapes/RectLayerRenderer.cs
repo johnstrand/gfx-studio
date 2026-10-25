@@ -7,6 +7,9 @@ public sealed class RectLayerRenderer : ILayerRenderer
 {
     public string LayerType => "rect";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["fill_color", "color", "stroke_color", "stroke_width", "corner_radius", "rotation"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

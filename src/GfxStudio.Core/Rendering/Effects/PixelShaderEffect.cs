@@ -28,6 +28,9 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
 {
     public string EffectType { get; } = effectType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["sksl", "fn", "shader", "pixel_fn", "function", "callback", "script", "path", "source", "color", "params", "uniforms"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);

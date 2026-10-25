@@ -24,6 +24,9 @@ public sealed class WorleyLayerRenderer : ILayerRenderer
 
     public string LayerType { get; }
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["color", "cell_size", "scale", "frequency", "jitter", "distance_metric", "metric", "feature", "warp_strength", "warp_scale"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

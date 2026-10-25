@@ -28,13 +28,40 @@ public sealed record CanvasRenderResult(
 /// </summary>
 public sealed class GfxCanvasCompositor
 {
+    private static readonly HashSet<string> UniversalLayerProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "type",
+        "size",
+        "offset",
+        "position",
+        "mix",
+        "opacity",
+        "visible",
+        "enabled",
+        "seed",
+        "mask",
+        "rotation",
+        "scale",
+        "transform_scale",
+        "flip_x",
+        "flip_y",
+        "anchor",
+        "pivot",
+        "resample",
+        "effects"
+    };
+
     private readonly LayerRendererRegistry _registry;
     private readonly LayerEffectRegistry _effectRegistry;
+    private readonly HashSet<string> _allEffectPropertyNames;
 
     public GfxCanvasCompositor(LayerRendererRegistry? registry = null, LayerEffectRegistry? effectRegistry = null)
     {
         _registry = registry ?? LayerRendererRegistry.CreateDefault();
         _effectRegistry = effectRegistry ?? LayerEffectRegistry.CreateDefault();
+        _allEffectPropertyNames = new HashSet<string>(
+            InlineEffectBindings.Select(b => b.PropName).Concat(_effectRegistry.Effects.Keys),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     public LayerRendererRegistry Registry => _registry;
@@ -128,6 +155,7 @@ public sealed class GfxCanvasCompositor
         var diagnostics = existingDiagnostics ?? [];
         var effectiveSeedProvider = seedProvider ?? new DeterministicSeedProvider(context.Run.Seed);
         var layerSpans = ExtractLayerSpans(context.Document);
+        var layerAstMap = ExtractLayerAstInfo(context.Document);
         var defaultSpan = context.Document?.Span
             ?? new SourceSpan("<memory>", new SourceLocation(1, 1, 0), new SourceLocation(1, 1, 0));
 
@@ -158,6 +186,8 @@ public sealed class GfxCanvasCompositor
                         DiagnosticSeverity.Error));
                     continue;
                 }
+
+                ValidateLayerProperties(layerId, layerProps, layerSpan, layerAstMap.GetValueOrDefault(layerId), diagnostics);
 
                 // Check visible / enabled flag (defaults to true)
                 if (!IsLayerVisible(layerProps, layerId, layerSpan, diagnostics))
@@ -1039,6 +1069,205 @@ public sealed class GfxCanvasCompositor
 
         diagnostics.Add(new GfxDiagnostic("RND010", $"Property 'opacity' on layer '{layerId}' must be a number between 0 and 1.", layerSpan, DiagnosticSeverity.Error));
         return 1.0f;
+    }
+
+    private void ValidateLayerProperties(
+        string layerId,
+        GfxObject layerProps,
+        SourceSpan layerSpan,
+        LayerAstInfo? layerAst,
+        List<GfxDiagnostic> diagnostics)
+    {
+        if (!layerProps.TryGetProperty("type", out var typeVal))
+        {
+            return;
+        }
+
+        var layerType = typeVal switch
+        {
+            GfxSymbol s => s.Identifier,
+            GfxString str => str.Value,
+            _ => null
+        };
+
+        if (layerType is null || !_registry.TryGetRenderer(layerType, out var renderer))
+        {
+            return;
+        }
+
+        var validLayerProperties = new HashSet<string>(UniversalLayerProperties, StringComparer.OrdinalIgnoreCase);
+        foreach (var effectName in _allEffectPropertyNames)
+        {
+            validLayerProperties.Add(effectName);
+        }
+
+        foreach (var rendererProp in renderer.SupportedProperties)
+        {
+            validLayerProperties.Add(rendererProp);
+        }
+
+        foreach (var propName in layerProps.OrderedKeys)
+        {
+            if (!validLayerProperties.Contains(propName))
+            {
+                var suggestion = PropertySuggestionHelper.GetSuggestionSuffix(propName, validLayerProperties);
+                var propSpan = layerAst?.PropertySpans.GetValueOrDefault(propName) ?? layerSpan;
+                diagnostics.Add(new GfxDiagnostic(
+                    "RND050",
+                    $"Unknown property '{propName}' on layer '{layerId}' of type '{layerType}'.{suggestion}",
+                    propSpan,
+                    DiagnosticSeverity.Warning));
+            }
+        }
+
+        // Validate inline effects on this layer
+        foreach (var (propName, effectName, _) in InlineEffectBindings)
+        {
+            if (layerProps.TryGetProperty(propName, out var inlineVal) && inlineVal is GfxObject effectProps)
+            {
+                if (_effectRegistry.TryGetEffect(effectName, out var inlineEffect))
+                {
+                    ValidateEffectProperties(
+                        layerId,
+                        propName,
+                        inlineEffect,
+                        effectProps,
+                        layerSpan,
+                        layerAst?.InlineEffectPropertySpans.GetValueOrDefault(propName),
+                        diagnostics);
+                }
+            }
+        }
+
+        // Validate effects in `effects = [ ... ]`
+        if (layerProps.TryGetProperty("effects", out var effectsVal) && effectsVal is GfxArray effectsArr)
+        {
+            for (var i = 0; i < effectsArr.Items.Count; i++)
+            {
+                if (effectsArr.Items[i] is GfxObject fxObj && fxObj.TryGetProperty("type", out var fxTypeVal))
+                {
+                    var fxType = fxTypeVal switch
+                    {
+                        GfxSymbol s => s.Identifier,
+                        GfxString str => str.Value,
+                        _ => string.Empty
+                    };
+
+                    if (_effectRegistry.TryGetEffect(fxType, out var effect))
+                    {
+                        Dictionary<string, SourceSpan>? itemSpans = null;
+                        if (layerAst is not null && i < layerAst.ArrayEffectPropertySpans.Count)
+                        {
+                            itemSpans = layerAst.ArrayEffectPropertySpans[i];
+                        }
+
+                        ValidateEffectProperties(
+                            layerId,
+                            fxType,
+                            effect,
+                            fxObj,
+                            layerSpan,
+                            itemSpans,
+                            diagnostics);
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ValidateEffectProperties(
+        string layerId,
+        string effectType,
+        ILayerEffect effect,
+        GfxObject effectProps,
+        SourceSpan fallbackSpan,
+        Dictionary<string, SourceSpan>? propertySpans,
+        List<GfxDiagnostic> diagnostics)
+    {
+        var validProps = new HashSet<string>(effect.SupportedProperties, StringComparer.OrdinalIgnoreCase)
+        {
+            "type",
+            "seed"
+        };
+
+        foreach (var propName in effectProps.OrderedKeys)
+        {
+            if (!validProps.Contains(propName))
+            {
+                var suggestion = PropertySuggestionHelper.GetSuggestionSuffix(propName, validProps);
+                var span = propertySpans?.GetValueOrDefault(propName) ?? fallbackSpan;
+                diagnostics.Add(new GfxDiagnostic(
+                    "FX009",
+                    $"Unknown property '{propName}' on effect '{effectType}' on layer '{layerId}'.{suggestion}",
+                    span,
+                    DiagnosticSeverity.Warning));
+            }
+        }
+    }
+
+    private sealed record LayerAstInfo(
+        SourceSpan LayerSpan,
+        Dictionary<string, SourceSpan> PropertySpans,
+        Dictionary<string, Dictionary<string, SourceSpan>> InlineEffectPropertySpans,
+        List<Dictionary<string, SourceSpan>> ArrayEffectPropertySpans);
+
+    private static Dictionary<string, LayerAstInfo> ExtractLayerAstInfo(GfxDocument? document)
+    {
+        var map = new Dictionary<string, LayerAstInfo>(StringComparer.Ordinal);
+        if (document is null)
+        {
+            return map;
+        }
+
+        var layersProp = document.Properties.LastOrDefault(p => p.Name == "layers");
+        if (layersProp?.Value is ObjectBlockExpr layersBlock)
+        {
+            foreach (var layerProp in layersBlock.Properties)
+            {
+                var propSpans = new Dictionary<string, SourceSpan>(StringComparer.OrdinalIgnoreCase);
+                var inlineSpans = new Dictionary<string, Dictionary<string, SourceSpan>>(StringComparer.OrdinalIgnoreCase);
+                var arraySpans = new List<Dictionary<string, SourceSpan>>();
+
+                if (layerProp.Value is ObjectBlockExpr layerBlock)
+                {
+                    foreach (var prop in layerBlock.Properties)
+                    {
+                        propSpans[prop.Name] = prop.Span;
+
+                        if (prop.Value is ObjectBlockExpr nestedBlock)
+                        {
+                            var nestedMap = new Dictionary<string, SourceSpan>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var np in nestedBlock.Properties)
+                            {
+                                nestedMap[np.Name] = np.Span;
+                            }
+
+                            inlineSpans[prop.Name] = nestedMap;
+                        }
+                        else if (prop.Name.Equals("effects", StringComparison.OrdinalIgnoreCase) && prop.Value is ArrayExpr arr)
+                        {
+                            foreach (var elem in arr.Elements)
+                            {
+                                var elemMap = new Dictionary<string, SourceSpan>(StringComparer.OrdinalIgnoreCase);
+                                if (elem is ObjectBlockExpr elemBlock)
+                                {
+                                    foreach (var ep in elemBlock.Properties)
+                                    {
+                                        elemMap[ep.Name] = ep.Span;
+                                    }
+                                }
+
+                                arraySpans.Add(elemMap);
+                            }
+                        }
+                    }
+                }
+
+                map[layerProp.Name] = new LayerAstInfo(layerProp.Span, propSpans, inlineSpans, arraySpans);
+            }
+        }
+
+        return map;
     }
 
     private static Dictionary<string, SourceSpan> ExtractLayerSpans(GfxDocument? document)

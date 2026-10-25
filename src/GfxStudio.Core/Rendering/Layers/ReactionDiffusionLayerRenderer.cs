@@ -20,6 +20,25 @@ public sealed class ReactionDiffusionLayerRenderer(string layerType = "reaction_
 
     public string LayerType { get; } = layerType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+    [
+        "preset",
+        "style",
+        "feed",
+        "f",
+        "kill",
+        "k",
+        "du",
+        "dv",
+        "iterations",
+        "steps",
+        "seed_pattern",
+        "seed_mode",
+        "scale",
+        "background",
+        "color"
+    ];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

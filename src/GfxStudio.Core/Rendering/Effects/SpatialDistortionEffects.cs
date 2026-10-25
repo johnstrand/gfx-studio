@@ -13,6 +13,21 @@ public sealed class WarpEffect(string effectType = "warp") : ILayerEffect
 {
     public string EffectType { get; } = effectType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+    [
+        "strength",
+        "amount",
+        "scale_x",
+        "scale_y",
+        "wrap",
+        "map",
+        "displacement_map",
+        "scale",
+        "frequency",
+        "octaves",
+        "phase"
+    ];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -145,6 +160,8 @@ public sealed class TwirlEffect(string effectType = "twirl") : ILayerEffect
 {
     public string EffectType { get; } = effectType;
 
+    public IReadOnlyCollection<string> SupportedProperties => ["center", "radius", "angle", "degrees"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -188,6 +205,9 @@ public sealed class TwirlEffect(string effectType = "twirl") : ILayerEffect
 public sealed class RippleEffect : ILayerEffect
 {
     public string EffectType => "ripple";
+
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["amplitude", "strength", "wavelength", "frequency", "phase", "style", "mode", "center", "wrap"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -245,6 +265,8 @@ public sealed class SpherizeEffect(string effectType = "spherize", double defaul
 {
     public string EffectType { get; } = effectType;
 
+    public IReadOnlyCollection<string> SupportedProperties => ["center", "radius", "strength", "amount"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -300,6 +322,8 @@ public sealed class SpherizeEffect(string effectType = "spherize", double defaul
 public sealed class KaleidoscopeEffect : ILayerEffect
 {
     public string EffectType => "kaleidoscope";
+
+    public IReadOnlyCollection<string> SupportedProperties => ["segments", "mirrors", "angle", "rotation", "center"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {

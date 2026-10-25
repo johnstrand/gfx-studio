@@ -12,6 +12,9 @@ public sealed class StripesLayerRenderer : ILayerRenderer
 {
     public string LayerType => "stripes";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["stripe_width", "width", "angle", "color1", "color2", "color", "background"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

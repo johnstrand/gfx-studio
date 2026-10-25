@@ -10,6 +10,8 @@ public sealed class GradientLayerRenderer : ILayerRenderer
 {
     public string LayerType => "gradient";
 
+    public IReadOnlyCollection<string> SupportedProperties => ["color", "style", "angle", "center", "radius"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -105,7 +107,7 @@ public sealed class GradientLayerRenderer : ILayerRenderer
             return number.Value;
         }
 
-        context.AddDiagnostic("RND050", $"Property '{propertyName}' on gradient layer '{context.LayerId}' must be a finite number.");
+        context.AddDiagnostic("RND052", $"Property '{propertyName}' on gradient layer '{context.LayerId}' must be a finite number.");
         return defaultValue;
     }
 
@@ -121,7 +123,7 @@ public sealed class GradientLayerRenderer : ILayerRenderer
             return point;
         }
 
-        context.AddDiagnostic("RND051", $"Property '{propertyName}' on gradient layer '{context.LayerId}' must contain finite x and y values.");
+        context.AddDiagnostic("RND053", $"Property '{propertyName}' on gradient layer '{context.LayerId}' must contain finite x and y values.");
         return defaultValue;
     }
 

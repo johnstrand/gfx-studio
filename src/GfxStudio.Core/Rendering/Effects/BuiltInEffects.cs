@@ -9,6 +9,8 @@ public sealed class GaussianBlurEffect(string effectType = "gaussian_blur") : IL
 {
     public string EffectType { get; } = effectType;
 
+    public IReadOnlyCollection<string> SupportedProperties => ["radius", "sigma"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -46,6 +48,8 @@ public sealed class ThresholdEffect : ILayerEffect
 {
     public string EffectType => "threshold";
 
+    public IReadOnlyCollection<string> SupportedProperties => ["level", "threshold", "high_color", "low_color"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -79,6 +83,8 @@ public sealed class ThresholdEffect : ILayerEffect
 public sealed class PosterizeEffect : ILayerEffect
 {
     public string EffectType => "posterize";
+
+    public IReadOnlyCollection<string> SupportedProperties => ["levels", "steps"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -126,6 +132,8 @@ public sealed class PosterizeEffect : ILayerEffect
 public sealed class PixelateEffect : ILayerEffect
 {
     public string EffectType => "pixelate";
+
+    public IReadOnlyCollection<string> SupportedProperties => ["block_size", "size"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -193,6 +201,9 @@ public sealed class PixelateEffect : ILayerEffect
 public sealed class ColorAdjustEffect(string effectType = "color_adjust", bool defaultInvert = false) : ILayerEffect
 {
     public string EffectType { get; } = effectType;
+
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["brightness", "contrast", "saturation", "hue_shift", "hue", "invert"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -298,6 +309,9 @@ public sealed class OutlineEffect : ILayerEffect
 {
     public string EffectType => "outline";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["width", "thickness", "color", "alpha_threshold", "threshold"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -371,6 +385,8 @@ public sealed class OutlineEffect : ILayerEffect
 public sealed class DropShadowEffect(string effectType = "drop_shadow") : ILayerEffect
 {
     public string EffectType { get; } = effectType;
+
+    public IReadOnlyCollection<string> SupportedProperties => ["offset", "blur", "radius", "color"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {

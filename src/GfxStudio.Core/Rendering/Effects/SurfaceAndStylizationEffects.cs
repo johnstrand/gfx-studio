@@ -10,6 +10,9 @@ public sealed class EmbossEffect : ILayerEffect
 {
     public string EffectType => "emboss";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["angle", "direction", "strength", "depth", "blend_original", "gray_level"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -87,6 +90,9 @@ public sealed class BevelEffect : ILayerEffect
 {
     public string EffectType => "bevel";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["width", "depth", "angle", "direction", "strength", "intensity", "highlight_color", "shadow_color"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -148,6 +154,8 @@ public sealed class NormalMapEffect : ILayerEffect
 {
     public string EffectType => "normal_map";
 
+    public IReadOnlyCollection<string> SupportedProperties => ["strength", "scale", "invert_x", "invert_y"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -190,6 +198,9 @@ public sealed class NormalMapEffect : ILayerEffect
 public sealed class HalftoneEffect : ILayerEffect
 {
     public string EffectType => "halftone";
+
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["cell_size", "dot_size", "angle", "shape", "style", "color", "background", "cmyk", "invert"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -320,6 +331,9 @@ public sealed class DitherStippleEffect(string effectType = "dither", string def
     };
 
     public string EffectType { get; } = effectType;
+
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["style", "mode", "levels", "scale", "cell_size", "color", "background"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -496,6 +510,9 @@ public sealed class EdgeDetectEffect(string effectType = "edge_detect") : ILayer
 {
     public string EffectType { get; } = effectType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["strength", "scale", "threshold", "invert", "color", "background"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -544,6 +561,9 @@ public sealed class VignetteEffect : ILayerEffect
 {
     public string EffectType => "vignette";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["intensity", "strength", "radius", "softness", "feather", "color"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -590,6 +610,9 @@ public sealed class VignetteEffect : ILayerEffect
 public sealed class BloomEffect(string effectType = "bloom") : ILayerEffect
 {
     public string EffectType { get; } = effectType;
+
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["threshold", "radius", "blur", "intensity", "strength"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -656,6 +679,9 @@ public sealed class ChromaticAberrationEffect : ILayerEffect
 {
     public string EffectType => "chromatic_aberration";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["angle", "radial", "offset", "shift", "strength"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -719,6 +745,9 @@ public sealed class CrtScanlinesEffect(string effectType = "crt") : ILayerEffect
 {
     public string EffectType { get; } = effectType;
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["spacing", "period", "opacity", "strength", "curvature", "scanline_opacity"];
+
     public void Apply(SKBitmap target, EffectContext context)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -726,6 +755,10 @@ public sealed class CrtScanlinesEffect(string effectType = "crt") : ILayerEffect
 
         var spacing = Math.Max(2, EffectPropertyHelpers.ResolveInt(context, "spacing", "period", defaultValue: 2));
         var opacity = Math.Clamp(EffectPropertyHelpers.ResolveDouble(context, "opacity", "strength", defaultValue: 0.35), 0.0, 1.0);
+        if (context.Properties.TryGetProperty("scanline_opacity", out var soVal) && soVal.TryCoerceToDouble(out var soNum))
+        {
+            opacity = (float)Math.Clamp(soNum, 0.0, 1.0);
+        }
         var curvature = Math.Clamp(EffectPropertyHelpers.ResolveDouble(context, "curvature", null, defaultValue: 0.0), 0.0, 1.0);
 
         var width = target.Width;
@@ -780,6 +813,8 @@ public sealed class CrtScanlinesEffect(string effectType = "crt") : ILayerEffect
 public sealed class KuwaharaEffect(string effectType = "oil_paint") : ILayerEffect
 {
     public string EffectType { get; } = effectType;
+
+    public IReadOnlyCollection<string> SupportedProperties => ["radius", "size"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {

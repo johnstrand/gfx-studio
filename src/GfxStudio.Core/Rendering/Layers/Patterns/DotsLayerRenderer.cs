@@ -12,6 +12,9 @@ public sealed class DotsLayerRenderer : ILayerRenderer
 {
     public string LayerType => "dots";
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+        ["spacing", "cell_size", "radius", "color", "background"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

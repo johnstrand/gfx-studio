@@ -164,6 +164,8 @@ public sealed class CompositorTests
     {
         public string LayerType => "test_solid";
 
+        public IReadOnlyCollection<string> SupportedProperties => ["color"];
+
         public SKBitmap RenderLayer(LayerRenderContext context)
         {
             orderTracker?.Add(context.LayerId);

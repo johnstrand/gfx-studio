@@ -8,6 +8,27 @@ namespace GfxStudio.Core.Output;
 /// <summary>Validates and extracts output settings from a parsed .gfx document.</summary>
 public sealed class OutputConfigBinder
 {
+    private static readonly HashSet<string> OutputProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "mode",
+        "dimensions",
+        "filename",
+        "count",
+        "runs",
+        "frames",
+        "start_index",
+        "columns",
+        "padding",
+        "spacing",
+        "background",
+        "metadata_filename",
+        "fps",
+        "frame_delay_ms",
+        "loop",
+        "dither",
+        "seed"
+    };
+
     public OutputConfigBindResult Bind(
         GfxDocument document,
         string sourceFilePath = "<memory>",
@@ -18,6 +39,25 @@ public sealed class OutputConfigBinder
 
         var span = document.Span;
         var diagnostics = new List<GfxDiagnostic>();
+
+        foreach (var outputAssignment in document.Properties.Where(p => p.Name == "output"))
+        {
+            if (outputAssignment.Value is ObjectBlockExpr outputBlock)
+            {
+                foreach (var prop in outputBlock.Properties)
+                {
+                    if (!OutputProperties.Contains(prop.Name))
+                    {
+                        var suggestion = PropertySuggestionHelper.GetSuggestionSuffix(prop.Name, OutputProperties);
+                        diagnostics.Add(new GfxDiagnostic(
+                            "OUT022",
+                            $"Unknown property '{prop.Name}' in 'output' block.{suggestion}",
+                            prop.Span,
+                            DiagnosticSeverity.Warning));
+                    }
+                }
+            }
+        }
         var initialRun = new RunContext(0, 1, 0);
         var evaluator = new GfxEvaluator(new EvaluationContext(document, initialRun, new FrameContext(0, 1, 15.0)));
 

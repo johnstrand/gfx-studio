@@ -8,6 +8,8 @@ public sealed class FillLayerRenderer : ILayerRenderer
 {
     public string LayerType => "fill";
 
+    public IReadOnlyCollection<string> SupportedProperties => ["color"];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);

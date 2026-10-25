@@ -28,6 +28,22 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
 
     public string LayerType { get; }
 
+    public IReadOnlyCollection<string> SupportedProperties =>
+    [
+        "color",
+        "scale",
+        "frequency",
+        "octaves",
+        "persistence",
+        "gain",
+        "lacunarity",
+        "phase",
+        "z",
+        "loop_seamless",
+        "warp_strength",
+        "warp_scale"
+    ];
+
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
