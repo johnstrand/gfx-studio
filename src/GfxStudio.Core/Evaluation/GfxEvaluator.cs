@@ -25,6 +25,7 @@ public sealed class GfxEvaluator
     private readonly DeterministicSeedProvider? _seedProvider;
     private readonly List<GfxDiagnostic> _diagnostics = [];
     private readonly Dictionary<string, PropertyAssignmentNode> _rootAstProperties = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PropertyAssignmentNode> _layerSeedProperties = new(StringComparer.Ordinal);
     private readonly List<string> _rootOrderedKeys = [];
     private readonly Dictionary<string, GfxValue> _resolvedPathCache = new(StringComparer.Ordinal);
     private readonly List<string> _evaluationStack = [];
@@ -47,6 +48,20 @@ public sealed class GfxEvaluator
                 }
 
                 _rootAstProperties[prop.Name] = prop;
+            }
+
+            if (_rootAstProperties.TryGetValue("layers", out var layersNode)
+                && layersNode.Value is ObjectBlockExpr layersBlock)
+            {
+                foreach (var layerNode in layersBlock.Properties)
+                {
+                    _layerSeedProperties.Remove(layerNode.Name);
+                    if (layerNode.Value is ObjectBlockExpr layerBlock
+                        && layerBlock.Properties.LastOrDefault(property => property.Name == "seed") is { } seedNode)
+                    {
+                        _layerSeedProperties[layerNode.Name] = seedNode;
+                    }
+                }
             }
 
             InitializeScripts(context);
@@ -292,24 +307,37 @@ public sealed class GfxEvaluator
         var previousRandom = _context.Random;
         var previousFrameRandom = _context.FrameRandom;
         var previousLayerId = _context.CurrentLayerId;
-        if (fullPath.StartsWith("layers.", StringComparison.Ordinal))
+        var hasLayerPath = TryGetLayerPropertyPath(fullPath, out var layerId, out var layerPropertyPath);
+        if (hasLayerPath)
         {
-            var rest = fullPath["layers.".Length..];
-            var dotIdx = rest.IndexOf('.');
-            var layerId = dotIdx >= 0 ? rest[..dotIdx] : rest;
             _context.CurrentLayerId = layerId;
-            if (_seedProvider is not null)
-            {
-                _context.Random = _seedProvider.CreateLayerRandom(_context.Run.Number, $"{layerId}:props");
-                _context.FrameRandom = _seedProvider.CreateRandom(_context.Run.Number, _context.Frame.Number, $"{layerId}:frame_props");
-            }
+            var defaultSeedProvider = _seedProvider ?? new DeterministicSeedProvider(_context.Run.Seed);
+            _context.Random = defaultSeedProvider.CreateLayerRandom(_context.Run.Number, $"{layerId}:props");
+            _context.FrameRandom = defaultSeedProvider.CreateRandom(_context.Run.Number, _context.Frame.Number, $"{layerId}:frame_props");
         }
 
         try
         {
+            if (hasLayerPath
+                && layerPropertyPath != "seed"
+                && TryResolveLayerSeed(layerId, out var layerSeed))
+            {
+                var pinnedSeedProvider = new DeterministicSeedProvider(layerSeed);
+                _context.Random = pinnedSeedProvider.CreateLayerRandom(0, $"{layerId}:props");
+                _context.FrameRandom = pinnedSeedProvider.CreateRandom(0, _context.Frame.Number, $"{layerId}:frame_props");
+            }
+
             var rawValue = EvaluateExprInternal(node.Value, fullPath, isMemberTarget: false);
             if (rawValue is null)
             {
+                if (hasLayerPath && layerPropertyPath == "seed")
+                {
+                    AddDiagnostic(
+                        "RND051",
+                        $"Seed property '{fullPath}' must evaluate to a finite, non-negative integer in the unsigned 64-bit range.",
+                        node.Span);
+                }
+
                 return null;
             }
 
@@ -317,6 +345,17 @@ public sealed class GfxEvaluator
             var finalValue = isCallbackProperty
                 ? rawValue
                 : UnwrapPropertyValue(rawValue, node.Span);
+
+            if (hasLayerPath
+                && layerPropertyPath == "seed"
+                && !GfxSeedValue.TryParse(finalValue, out _))
+            {
+                AddDiagnostic(
+                    "RND051",
+                    $"Seed property '{fullPath}' must be a finite, non-negative integer in the unsigned 64-bit range.",
+                    node.Span);
+            }
+
             // Only cache values that aren't backed by dynamic per-pass function references
             if (rawValue is not GfxFunctionRef)
             {
@@ -333,6 +372,34 @@ public sealed class GfxEvaluator
             _evaluationStack.RemoveAt(_evaluationStack.Count - 1);
             _activePaths.Remove(fullPath);
         }
+    }
+
+    private bool TryResolveLayerSeed(string layerId, out ulong seed)
+    {
+        if (!_layerSeedProperties.TryGetValue(layerId, out var seedNode))
+        {
+            seed = 0;
+            return false;
+        }
+
+        var seedValue = ResolvePropertyPath($"layers.{layerId}.seed", seedNode.Span);
+        return GfxSeedValue.TryParse(seedValue, out seed);
+    }
+
+    private static bool TryGetLayerPropertyPath(string fullPath, out string layerId, out string propertyPath)
+    {
+        layerId = string.Empty;
+        propertyPath = string.Empty;
+        if (!fullPath.StartsWith("layers.", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var rest = fullPath["layers.".Length..];
+        var dotIndex = rest.IndexOf('.');
+        layerId = dotIndex >= 0 ? rest[..dotIndex] : rest;
+        propertyPath = dotIndex >= 0 ? rest[(dotIndex + 1)..] : string.Empty;
+        return layerId.Length > 0;
     }
 
     private GfxValue? EvaluateExprInternal(GfxExpr expr, string? currentPathPrefix, bool isMemberTarget)

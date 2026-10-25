@@ -103,6 +103,38 @@ Available in all execution modes:
 - `run.count`: Total number of runs in the batch or series.
 - `run.seed`: 64-bit deterministic master seed for the current run.
 
+### Seeds
+The document-level `seed` (or `output.seed`) selects the master seed for rendering. If neither is specified and there is no API/CLI seed override, GfxStudio uses the current UTC timestamp, so separate renders normally produce different results. Explicit seed `0` is valid and remains deterministic.
+
+Any layer can override its random streams with a non-negative integer seed in the unsigned 64-bit range. The layer seed pins both random property evaluation and the renderer stream, independent of the master seed and run number. Seed expressions can still deliberately vary per run:
+
+```gfx
+layers = {
+  background_clouds = {
+    type = fractal_clouds
+    seed = 42                  // Stable across runs and master seeds
+  }
+  varied_clouds = {
+    type = fractal_clouds
+    seed = 1000 + run.number   // Explicitly varies by run
+  }
+}
+```
+
+Effects may also specify their own seed, either in an inline effect block or an `effects` array entry. It pins only that effect's random stream:
+
+```gfx
+layers = {
+  clouds = {
+    type = fractal_clouds
+    warp = { seed = 17, strength = 0.4 }
+    effects = [{ type = shader, seed = 23, fn = "noise(u * 8, v * 8)" }]
+  }
+}
+```
+
+Layer and effect seeds must be finite, non-negative integers no greater than `ulong.MaxValue`; invalid values report `RND051`.
+
 ### Frame Context (`frame.*`)
 Available in animation modes (`animation_frames`, `animation_gif`):
 - `frame.number`: Current frame index (0-based).

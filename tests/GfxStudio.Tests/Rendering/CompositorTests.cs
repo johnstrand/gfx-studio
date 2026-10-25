@@ -2,6 +2,7 @@ using FluentAssertions;
 using GfxStudio.Core.Evaluation;
 using GfxStudio.Core.Primitives;
 using GfxStudio.Core.Rendering;
+using GfxStudio.Core.Rendering.Effects;
 using SkiaSharp;
 
 namespace GfxStudio.Tests.Rendering;
@@ -141,7 +142,7 @@ public sealed class CompositorTests
 
         using var missingResult = new GfxCanvasCompositor().RenderSource(missingSource);
 
-        missingResult.Diagnostics.Should().ContainSingle(d => d.Code == "RND051");
+        missingResult.Diagnostics.Should().ContainSingle(d => d.Code == "RND054");
 
         const string cyclicSource = """
             layers = {
@@ -153,8 +154,103 @@ public sealed class CompositorTests
 
         using var cyclicResult = new GfxCanvasCompositor().RenderSource(cyclicSource);
 
-        cyclicResult.Diagnostics.Should().ContainSingle(d => d.Code == "RND052");
+        cyclicResult.Diagnostics.Should().ContainSingle(d => d.Code == "RND055");
         cyclicResult.Diagnostics[0].Message.Should().Contain("first").And.Contain("second");
+    }
+
+    [Fact]
+    public void RenderSource_LayerSeedPinsPropertyAndRendererRandomStreamsAndCanVaryByRun()
+    {
+        const string source = """
+            layers = {
+              seeded = {
+                type = test_seeded
+                seed = 700 + run.number
+                value = random_int(0, 16777216)
+              }
+            }
+            output = { dimensions = { width = 1, height = 1 } }
+            """;
+
+        var observed = new List<(double Property, ulong Renderer)>();
+        var compositor = new GfxCanvasCompositor(LayerRendererRegistry.CreateDefault([
+            new TestSeededLayerRenderer(observed)]));
+
+        using var firstMasterSeed = compositor.RenderSource(source, masterSeed: 1, run: new RunContext(3, 10, 1));
+        using var otherMasterSeed = compositor.RenderSource(source, masterSeed: 999, run: new RunContext(3, 10, 999));
+        using var nextRun = compositor.RenderSource(source, masterSeed: 1, run: new RunContext(4, 10, 1));
+
+        firstMasterSeed.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, firstMasterSeed.Diagnostics));
+        otherMasterSeed.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, otherMasterSeed.Diagnostics));
+        nextRun.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, nextRun.Diagnostics));
+        observed.Should().HaveCount(3);
+        observed[0].Should().Be(observed[1]);
+        observed[2].Should().NotBe(observed[0]);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("18446744073709551616")]
+    [InlineData("sqrt(-1)")]
+    public void RenderSource_InvalidLayerSeed_ReportsRND051(string seed)
+    {
+        var source = $$"""
+            layers = { layer = { type = test_solid, seed = {{seed}} } }
+            output = { dimensions = { width = 1, height = 1 } }
+            """;
+
+        using var result = new GfxCanvasCompositor(LayerRendererRegistry.CreateDefault([
+            new TestSolidLayerRenderer()])).RenderSource(source, masterSeed: 1);
+
+        result.Diagnostics.Should().ContainSingle(d => d.Code == "RND051");
+    }
+
+    [Theory]
+    [InlineData("inline")]
+    [InlineData("array")]
+    public void RenderSource_EffectSeedsPinRandomStreamsForInlineAndArrayEffects(string effectLocation)
+    {
+        var effectProperty = effectLocation == "inline"
+            ? "shader = { seed = 12345 }"
+            : "effects = [{ type = shader, seed = 12345 }]";
+        var source = $$"""
+            layers = { layer = { type = test_solid, color = rgb(255, 255, 255), {{effectProperty}} } }
+            output = { dimensions = { width = 1, height = 1 } }
+            """;
+
+        var effects = LayerEffectRegistry.CreateDefault();
+        effects.Register(new TestRandomEffect("shader"));
+        var compositor = new GfxCanvasCompositor(
+            LayerRendererRegistry.CreateDefault([new TestSolidLayerRenderer()]),
+            effects);
+
+        using var first = compositor.RenderSource(source, masterSeed: 1);
+        using var second = compositor.RenderSource(source, masterSeed: 987654);
+
+        first.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, first.Diagnostics));
+        second.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, second.Diagnostics));
+        first.Bitmap!.GetPixel(0, 0).Should().Be(second.Bitmap!.GetPixel(0, 0));
+    }
+
+    [Theory]
+    [InlineData("shader = { seed = -1 }")]
+    [InlineData("effects = [{ type = shader, seed = 1.25 }]")]
+    public void RenderSource_InvalidEffectSeed_ReportsRND051(string effectProperty)
+    {
+        var source = $$"""
+            layers = { layer = { type = test_solid, color = rgb(255, 255, 255), {{effectProperty}} } }
+            output = { dimensions = { width = 1, height = 1 } }
+            """;
+        var effects = LayerEffectRegistry.CreateDefault();
+        effects.Register(new TestRandomEffect("shader"));
+        var compositor = new GfxCanvasCompositor(
+            LayerRendererRegistry.CreateDefault([new TestSolidLayerRenderer()]),
+            effects);
+
+        using var result = compositor.RenderSource(source, masterSeed: 1);
+
+        result.Diagnostics.Should().ContainSingle(d => d.Code == "RND051");
     }
 
     [Fact]
@@ -290,6 +386,37 @@ public sealed class CompositorTests
             }
 
             return bitmap;
+        }
+    }
+
+    private sealed class TestSeededLayerRenderer(List<(double Property, ulong Renderer)> observed) : ILayerRenderer
+    {
+        public string LayerType => "test_seeded";
+
+        public IReadOnlyCollection<string> SupportedProperties => ["value"];
+
+        public SKBitmap RenderLayer(LayerRenderContext context)
+        {
+            var bitmap = context.CreateLayerBitmap();
+            var propertyValue = ((GfxNumber)context.LayerProperties.Properties["value"]).Value;
+            var rendererValue = context.Random.NextUInt64();
+            observed.Add((propertyValue, rendererValue));
+            var packedColor = (int)propertyValue;
+            bitmap.Erase(new SKColor((byte)(packedColor >> 16), (byte)(packedColor >> 8), (byte)packedColor));
+            return bitmap;
+        }
+    }
+
+    private sealed class TestRandomEffect(string effectType) : ILayerEffect
+    {
+        public string EffectType { get; } = effectType;
+
+        public IReadOnlyCollection<string> SupportedProperties => ["seed"];
+
+        public void Apply(SKBitmap target, EffectContext context)
+        {
+            var value = context.Random.NextUInt64();
+            target.SetPixel(0, 0, new SKColor((byte)(value >> 16), (byte)(value >> 8), (byte)value));
         }
     }
 

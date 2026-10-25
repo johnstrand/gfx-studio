@@ -43,7 +43,7 @@ public sealed class GfxEngine
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             var span = new SourceSpan(fullPath, new SourceLocation(1, 1, 0), new SourceLocation(1, 1, 0));
-            return Failure(options?.SeedOverride ?? 0, new GfxDiagnostic("OUT013", $"Could not read .gfx file: {exception.Message}", span, DiagnosticSeverity.Error));
+            return Failure(options?.SeedOverride ?? unchecked((ulong)DateTime.UtcNow.Ticks), new GfxDiagnostic("OUT013", $"Could not read .gfx file: {exception.Message}", span, DiagnosticSeverity.Error));
         }
     }
 
@@ -55,21 +55,22 @@ public sealed class GfxEngine
         ArgumentNullException.ThrowIfNull(gfxSource);
         ArgumentNullException.ThrowIfNull(sourceFilePath);
         options ??= new RenderOptions();
+        var timestampSeed = unchecked((ulong)DateTime.UtcNow.Ticks);
 
         var parseResult = GfxParser.Parse(gfxSource, sourceFilePath);
         if (parseResult.HasErrors || parseResult.Document is null)
         {
-            return new RenderJobResult(options.SeedOverride ?? 0, [], parseResult.Diagnostics);
+            return new RenderJobResult(options.SeedOverride ?? timestampSeed, [], parseResult.Diagnostics);
         }
 
         var bound = _binder.Bind(parseResult.Document, sourceFilePath, options);
         if (bound.Config is null || bound.HasErrors)
         {
-            return new RenderJobResult(options.SeedOverride ?? bound.Config?.Seed ?? 0, [], bound.Diagnostics);
+            return new RenderJobResult(options.SeedOverride ?? bound.Config?.Seed ?? timestampSeed, [], bound.Diagnostics);
         }
 
         var config = bound.Config;
-        var masterSeed = options.SeedOverride ?? config.Seed ?? 0UL;
+        var masterSeed = options.SeedOverride ?? config.Seed ?? timestampSeed;
         var baseDirectory = ResolveBaseDirectory(sourceFilePath, options.OutputDirectory);
         try
         {

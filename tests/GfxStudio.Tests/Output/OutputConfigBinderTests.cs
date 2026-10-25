@@ -110,4 +110,41 @@ public sealed class OutputConfigBinderTests
             Directory.Delete(outputDirectory, recursive: true);
         }
     }
+
+    [Fact]
+    public void RenderSource_UsesCurrentTimestampWhenNoSeedIsSpecifiedAndPreservesExplicitZero()
+    {
+        const string sourceWithoutSeed = """
+            layers = { layer0 = { type = fill, color = NAMED_COLORS.WHITE } }
+            output = { dimensions = { width = 2, height = 2 }, filename = "timestamp.png" }
+            """;
+        const string sourceWithZeroSeed = """
+            seed = 0
+            layers = { layer0 = { type = fill, color = NAMED_COLORS.WHITE } }
+            output = { dimensions = { width = 2, height = 2 }, filename = "zero.png" }
+            """;
+
+        var outputDirectory = Path.Combine(Path.GetTempPath(), "gfxstudio-output-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outputDirectory);
+        try
+        {
+            var before = unchecked((ulong)DateTime.UtcNow.Ticks);
+            using var timestampResult = new GfxEngine().RenderSource(
+                sourceWithoutSeed,
+                new RenderOptions { OutputDirectory = outputDirectory });
+            var after = unchecked((ulong)DateTime.UtcNow.Ticks);
+            using var zeroResult = new GfxEngine().RenderSource(
+                sourceWithZeroSeed,
+                new RenderOptions { OutputDirectory = outputDirectory });
+
+            timestampResult.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, timestampResult.Diagnostics));
+            timestampResult.MasterSeed.Should().BeInRange(before, after);
+            zeroResult.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, zeroResult.Diagnostics));
+            zeroResult.MasterSeed.Should().Be(0);
+        }
+        finally
+        {
+            Directory.Delete(outputDirectory, recursive: true);
+        }
+    }
 }

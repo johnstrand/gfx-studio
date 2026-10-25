@@ -68,7 +68,7 @@ public sealed class PreviewRenderer
         }
 
         var config = bound.Config;
-        var masterSeed = seedOverride ?? config.Seed ?? 0UL;
+        var masterSeed = seedOverride ?? config.Seed ?? unchecked((ulong)DateTime.UtcNow.Ticks);
         var seedProvider = new DeterministicSeedProvider(masterSeed);
         var documentSpan = parseResult.Document.Span;
 

@@ -71,7 +71,7 @@ public sealed class GfxCanvasCompositor
     /// <summary>Parses, evaluates, and renders the given .gfx source into a composited <see cref="SKBitmap"/>.</summary>
     public CanvasRenderResult RenderSource(
         string source,
-        ulong masterSeed = 0,
+        ulong? masterSeed = null,
         RunContext? run = null,
         FrameContext? frame = null,
         IEnumerable<IGfxCallable>? functions = null,
@@ -84,7 +84,8 @@ public sealed class GfxCanvasCompositor
             return new CanvasRenderResult(null, null, parseResult.Diagnostics);
         }
 
-        var seedProvider = new DeterministicSeedProvider(masterSeed);
+        var effectiveMasterSeed = masterSeed ?? unchecked((ulong)DateTime.UtcNow.Ticks);
+        var seedProvider = new DeterministicSeedProvider(effectiveMasterSeed);
         var effectiveRun = run ?? new RunContext(0, 1, seedProvider.DeriveSeed(0, 0, "__run__"));
         var effectiveFrame = frame ?? new FrameContext(0, 1, 15.0);
 
@@ -185,7 +186,7 @@ public sealed class GfxCanvasCompositor
             {
                 var cycle = string.Join(" -> ", layerCopyStack.Append(layerId));
                 diagnostics.Add(new GfxDiagnostic(
-                    "RND052",
+                    "RND055",
                     $"Layer copy cycle detected: {cycle}.",
                     layerSpans.GetValueOrDefault(layerId, defaultSpan),
                     DiagnosticSeverity.Error));
@@ -214,7 +215,7 @@ public sealed class GfxCanvasCompositor
                         || sourceValue is not GfxObject)
                     {
                         diagnostics.Add(new GfxDiagnostic(
-                            "RND051",
+                            "RND054",
                             $"Property 'copy' on layer '{layerId}' must reference an existing layer by name.",
                             layerAstMap.GetValueOrDefault(layerId)?.PropertySpans.GetValueOrDefault("copy")
                                 ?? layerSpans.GetValueOrDefault(layerId, defaultSpan),
@@ -407,8 +408,27 @@ public sealed class GfxCanvasCompositor
             return null;
         }
 
-        var layerRandom = effectiveSeedProvider.CreateLayerRandom(context.Run.Number, layerId);
-        var layerFrameRandom = effectiveSeedProvider.CreateRandom(context.Run.Number, context.Frame.Number, $"{layerId}:frame");
+        var layerSeedProvider = effectiveSeedProvider;
+        var layerRunNumber = context.Run.Number;
+        if (layerProps.TryGetProperty("seed", out var layerSeedValue))
+        {
+            if (GfxSeedValue.TryParse(layerSeedValue, out var explicitLayerSeed))
+            {
+                layerSeedProvider = new DeterministicSeedProvider(explicitLayerSeed);
+                layerRunNumber = 0;
+            }
+            else
+            {
+                diagnostics.Add(new GfxDiagnostic(
+                    "RND051",
+                    $"Seed property on layer '{layerId}' must be a finite, non-negative integer in the unsigned 64-bit range.",
+                    layerSpan,
+                    DiagnosticSeverity.Error));
+            }
+        }
+
+        var layerRandom = layerSeedProvider.CreateLayerRandom(layerRunNumber, layerId);
+        var layerFrameRandom = layerSeedProvider.CreateRandom(layerRunNumber, context.Frame.Number, $"{layerId}:frame");
         var previousRandom = context.Random;
         var previousFrameRandom = context.FrameRandom;
         context.Random = layerRandom;
@@ -607,7 +627,14 @@ public sealed class GfxCanvasCompositor
 
             if (effectProps is not null && _effectRegistry.TryGetEffect(effectName, out var inlineEffect))
             {
-                inlineEffect.Apply(bitmap, new EffectContext(layerId, effectProps, layerSpan, diagnostics, layerRandom, resolveLayerBitmap, context));
+                inlineEffect.Apply(bitmap, new EffectContext(
+                    layerId,
+                    effectProps,
+                    layerSpan,
+                    diagnostics,
+                    ResolveEffectRandom(effectProps, layerId, layerSpan, diagnostics, layerRandom),
+                    resolveLayerBitmap,
+                    context));
             }
         }
 
@@ -635,9 +662,41 @@ public sealed class GfxCanvasCompositor
                     continue;
                 }
 
-                effect.Apply(bitmap, new EffectContext(layerId, fxObj, layerSpan, diagnostics, layerRandom, resolveLayerBitmap, context));
+                effect.Apply(bitmap, new EffectContext(
+                    layerId,
+                    fxObj,
+                    layerSpan,
+                    diagnostics,
+                    ResolveEffectRandom(fxObj, layerId, layerSpan, diagnostics, layerRandom),
+                    resolveLayerBitmap,
+                    context));
             }
         }
+    }
+
+    private static IGfxRandom ResolveEffectRandom(
+        GfxObject effectProperties,
+        string layerId,
+        SourceSpan layerSpan,
+        List<GfxDiagnostic> diagnostics,
+        IGfxRandom layerRandom)
+    {
+        if (!effectProperties.TryGetProperty("seed", out var seedValue))
+        {
+            return layerRandom;
+        }
+
+        if (GfxSeedValue.TryParse(seedValue, out var effectSeed))
+        {
+            return new GfxRandom(effectSeed);
+        }
+
+        diagnostics.Add(new GfxDiagnostic(
+            "RND051",
+            $"Seed property on an effect on layer '{layerId}' must be a finite, non-negative integer in the unsigned 64-bit range.",
+            layerSpan,
+            DiagnosticSeverity.Error));
+        return layerRandom;
     }
 
     private static GfxObject? CoerceEffectProps(GfxValue val, string scalarPropName) =>

@@ -324,11 +324,9 @@ public sealed class OutputConfigBinder
             return null;
         }
 
-        if (value is GfxNumber number && double.IsFinite(number.Value)
-            && number.Value >= 0 && number.Value < 18446744073709551616.0
-            && number.Value == Math.Truncate(number.Value))
+        if (GfxSeedValue.TryParse(value, out var seed))
         {
-            return (ulong)number.Value;
+            return seed;
         }
 
         diagnostics.Add(Error("OUT012", "Seed must be a non-negative integer in the unsigned 64-bit range.", span));
