@@ -161,6 +161,152 @@ public sealed class JsScriptingTests
         }
     }
 
+    [Fact]
+    public void AnimationGif_InvokesJsFunctionPerFrameWithUpdatedContext()
+    {
+        var tempDir = CreateTemporaryDirectory();
+        try
+        {
+            var jsPath = Path.Combine(tempDir, "anim.js");
+            File.WriteAllText(jsPath, """
+                export function getFrameColor(ctx) {
+                    // Test ctx.frame.number, ctx.frame.progress, ctx.output.dimensions, and hsl
+                    const h = ctx.frame.progress * 360;
+                    return ctx.hsl(h, 1.0, 0.5);
+                }
+                export function getFrameTitle(ctx) {
+                    return "F" + ctx.frame.number + "@" + ctx.output.dimensions.width;
+                }
+                """);
+
+            var gfxPath = Path.Combine(tempDir, "anim.gfx");
+            File.WriteAllText(gfxPath, """
+                script = "anim.js"
+
+                layers = {
+                  bg = {
+                    type = fill
+                    color = getFrameColor
+                  }
+                  title = {
+                    type = text
+                    text = getFrameTitle
+                    font_size = 14
+                  }
+                }
+
+                output = {
+                  mode = animation_gif
+                  frames = 4
+                  fps = 10
+                  dimensions = { width = 32, height = 32 }
+                  filename = "anim.gif"
+                }
+                """);
+
+            var engine = new GfxEngine();
+            using var result = engine.RenderFile(gfxPath);
+
+            result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+            result.Artifacts.Should().ContainSingle();
+            result.Artifacts[0].FilePath.Should().EndWith(".gif");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void JsColorHelpers_HslHexAndColorRamp_EvaluateProperly()
+    {
+        var tempDir = CreateTemporaryDirectory();
+        try
+        {
+            var jsPath = Path.Combine(tempDir, "palette.js");
+            File.WriteAllText(jsPath, """
+                export function makeRamp(ctx) {
+                    return ctx.color_ramp(
+                        ctx.hex("#FF0000"),
+                        ctx.hsl(120, 1.0, 0.5),
+                        ctx.rgb(0, 0, 255)
+                    );
+                }
+                """);
+
+            var gfxPath = Path.Combine(tempDir, "palette.gfx");
+            File.WriteAllText(gfxPath, """
+                script = "palette.js"
+
+                layers = {
+                  grad = {
+                    type = gradient
+                    style = "linear"
+                    color = makeRamp
+                    angle = 90
+                  }
+                }
+
+                output = {
+                  dimensions = { width = 32, height = 32 }
+                  filename = "grad.png"
+                }
+                """);
+
+            var engine = new GfxEngine();
+            using var result = engine.RenderFile(gfxPath);
+
+            result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+            result.Artifacts.Should().ContainSingle();
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void JsSyntaxError_ReportsDiagnosticWithLineAndColumn()
+    {
+        var tempDir = CreateTemporaryDirectory();
+        try
+        {
+            var jsPath = Path.Combine(tempDir, "broken.js");
+            File.WriteAllText(jsPath, """
+                function invalidSyntax() {
+                   return {{{;
+                }
+                """);
+
+            var gfxPath = Path.Combine(tempDir, "broken.gfx");
+            File.WriteAllText(gfxPath, """
+                script = "broken.js"
+
+                layers = {
+                  bg = {
+                    type = fill
+                    color = rgb(0, 0, 0)
+                  }
+                }
+
+                output = {
+                  dimensions = { width = 16, height = 16 }
+                  filename = "broken.png"
+                }
+                """);
+
+            var engine = new GfxEngine();
+            using var result = engine.RenderFile(gfxPath);
+
+            result.HasErrors.Should().BeTrue();
+            result.Diagnostics.Should().Contain(d => d.Code == "JS002");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
     private static string CreateTemporaryDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "gfxstudio-js-tests", Guid.NewGuid().ToString("N"));

@@ -54,6 +54,49 @@ public static class GfxJsValueConverter
 
         if (jsValue is ObjectInstance obj)
         {
+            if (obj is Jint.Runtime.Interop.ObjectWrapper wrapper)
+            {
+                if (wrapper.Target is ColorRgba colorRgba)
+                {
+                    return new GfxColor(colorRgba);
+                }
+
+                if (wrapper.Target is ColorRamp colorRamp)
+                {
+                    return new GfxColorRamp(colorRamp);
+                }
+
+                if (wrapper.Target is Dimensions dimensions)
+                {
+                    return new GfxDimensions(dimensions);
+                }
+            }
+
+            // Check for ColorRamp { __isColorRamp: true, stops: [...] }
+            var isRampVal = obj.Get("__isColorRamp");
+            if (isRampVal.IsBoolean() && isRampVal.AsBoolean() && obj.Get("stops") is ArrayInstance stopsArr)
+            {
+                var stopsLen = (int)stopsArr.Get("length").AsNumber();
+                var colorStops = new List<ColorStop>(stopsLen);
+                for (var i = 0; i < stopsLen; i++)
+                {
+                    var stopObj = stopsArr.Get(i.ToString(System.Globalization.CultureInfo.InvariantCulture)).AsObject();
+                    var pos = (float)stopObj.Get("position").AsNumber();
+                    var colObj = stopObj.Get("color").AsObject();
+                    var r = (byte)colObj.Get("r").AsNumber();
+                    var g = (byte)colObj.Get("g").AsNumber();
+                    var b = (byte)colObj.Get("b").AsNumber();
+                    var aVal = colObj.Get("a");
+                    var a = aVal.IsNumber() ? (byte)aVal.AsNumber() : (byte)255;
+                    colorStops.Add(new ColorStop(pos, new ColorRgba(r, g, b, a)));
+                }
+
+                if (colorStops.Count >= 2)
+                {
+                    return new GfxColorRamp(new ColorRamp(colorStops));
+                }
+            }
+
             // Check for Color { r, g, b, [a] }
             var rVal = obj.Get("r");
             var gVal = obj.Get("g");

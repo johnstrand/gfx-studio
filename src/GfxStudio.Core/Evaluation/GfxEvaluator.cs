@@ -291,11 +291,18 @@ public sealed class GfxEvaluator
         _evaluationStack.Add(fullPath);
         var previousRandom = _context.Random;
         var previousFrameRandom = _context.FrameRandom;
-        if (_seedProvider is not null && parentPathPrefix == "layers")
+        var previousLayerId = _context.CurrentLayerId;
+        if (fullPath.StartsWith("layers.", StringComparison.Ordinal))
         {
-            var layerId = fullPath["layers.".Length..];
-            _context.Random = _seedProvider.CreateLayerRandom(_context.Run.Number, $"{layerId}:props");
-            _context.FrameRandom = _seedProvider.CreateRandom(_context.Run.Number, _context.Frame.Number, $"{layerId}:frame_props");
+            var rest = fullPath["layers.".Length..];
+            var dotIdx = rest.IndexOf('.');
+            var layerId = dotIdx >= 0 ? rest[..dotIdx] : rest;
+            _context.CurrentLayerId = layerId;
+            if (_seedProvider is not null)
+            {
+                _context.Random = _seedProvider.CreateLayerRandom(_context.Run.Number, $"{layerId}:props");
+                _context.FrameRandom = _seedProvider.CreateRandom(_context.Run.Number, _context.Frame.Number, $"{layerId}:frame_props");
+            }
         }
 
         try
@@ -319,6 +326,7 @@ public sealed class GfxEvaluator
         {
             _context.Random = previousRandom;
             _context.FrameRandom = previousFrameRandom;
+            _context.CurrentLayerId = previousLayerId;
             _evaluationStack.RemoveAt(_evaluationStack.Count - 1);
             _activePaths.Remove(fullPath);
         }

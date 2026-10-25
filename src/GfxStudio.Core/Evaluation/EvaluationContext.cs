@@ -172,4 +172,10 @@ public sealed class EvaluationContext
 
     public bool TryGetFunction(string name, out IGfxCallable callable) =>
         FunctionRegistry.TryGetFunction(name, out callable!);
+
+    public string? CurrentLayerId { get; set; }
+
+    public Dimensions CurrentLayerDimensions { get; set; }
+
+    public Dimensions OutputDimensions { get; set; }
 }

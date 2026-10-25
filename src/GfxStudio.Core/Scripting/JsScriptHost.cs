@@ -35,7 +35,25 @@ public sealed class JsScriptHost
         });
 
         InitializeGlobalEnvironment(_engine, initialContext);
-        LoadScript(scriptContent, scriptPath);
+        try
+        {
+            LoadScript(scriptContent, scriptPath);
+        }
+        catch (JavaScriptException jsEx)
+        {
+            var line = jsEx.Location.Start.Line;
+            var col = jsEx.Location.Start.Column;
+            var loc = new SourceLocation(line, col, 0);
+            var span = new SourceSpan(ScriptPath, loc, loc);
+            var stack = string.IsNullOrWhiteSpace(jsEx.JavaScriptStackTrace) ? string.Empty : $"\n{jsEx.JavaScriptStackTrace}";
+            throw new GfxException(new GfxDiagnostic("JS002", $"JavaScript error in '{Path.GetFileName(ScriptPath)}' at {line}:{col}: {jsEx.Message}{stack}", span, DiagnosticSeverity.Error));
+        }
+        catch (Exception ex)
+        {
+            var loc = new SourceLocation(1, 1, 0);
+            var span = new SourceSpan(ScriptPath, loc, loc);
+            throw new GfxException(new GfxDiagnostic("JS002", $"JavaScript error in '{Path.GetFileName(ScriptPath)}': {ex.Message}", span, DiagnosticSeverity.Error));
+        }
     }
 
     public string ScriptPath { get; }
@@ -76,7 +94,8 @@ public sealed class JsScriptHost
             var col = jsEx.Location.Start.Column;
             var loc = new SourceLocation(line, col, 0);
             var span = new SourceSpan(ScriptPath, loc, loc);
-            throw new GfxException(new GfxDiagnostic("JS002", $"JavaScript error in '{Path.GetFileName(ScriptPath)}': {jsEx.Message}", span, DiagnosticSeverity.Error));
+            var stack = string.IsNullOrWhiteSpace(jsEx.JavaScriptStackTrace) ? string.Empty : $"\n{jsEx.JavaScriptStackTrace}";
+            throw new GfxException(new GfxDiagnostic("JS002", $"JavaScript error in '{Path.GetFileName(ScriptPath)}' at {line}:{col}: {jsEx.Message}{stack}", span, DiagnosticSeverity.Error));
         }
         catch (TimeoutException)
         {
@@ -181,6 +200,43 @@ public sealed class JsScriptHost
             };
         }));
 
+        engine.SetValue("hsl", (Func<double, double, double, object>)((h, s, l) =>
+        {
+            var (r, g, b) = HslToRgb(h, s, l);
+            return new Dictionary<string, object>
+            {
+                ["r"] = r,
+                ["g"] = g,
+                ["b"] = b,
+                ["a"] = 255
+            };
+        }));
+
+        engine.SetValue("__createColorRamp", (Func<JsValue, object>)(argsVal =>
+        {
+            var stops = new List<ColorStop>();
+            if (argsVal is ArrayInstance arr)
+            {
+                var len = (int)arr.Get("length").AsNumber();
+                for (var i = 0; i < len; i++)
+                {
+                    var item = arr.Get(i.ToString(CultureInfo.InvariantCulture));
+                    var pos = len > 1 ? (float)i / (len - 1) : 0f;
+                    var (r, g, b, a) = ExtractColorRgba(item);
+                    stops.Add(new ColorStop(pos, new ColorRgba(r, g, b, a)));
+                }
+            }
+
+            if (stops.Count < 2)
+            {
+                stops.Add(new ColorStop(0f, ColorRgba.Black));
+                stops.Add(new ColorStop(1f, ColorRgba.White));
+            }
+
+            return new ColorRamp(stops);
+        }));
+        engine.Execute("function color_ramp(...args) { return __createColorRamp(args); };");
+
         engine.SetValue("hex", (Func<string, object>)(hexStr =>
         {
             if (string.IsNullOrWhiteSpace(hexStr) || !hexStr.StartsWith('#'))
@@ -247,6 +303,23 @@ public sealed class JsScriptHost
                 ["progress"] = context.Frame.Progress,
                 ["t"] = context.Frame.Progress
             },
+            ["layer"] = new Dictionary<string, object>
+            {
+                ["id"] = context.CurrentLayerId ?? string.Empty,
+                ["size"] = new Dictionary<string, object>
+                {
+                    ["width"] = context.CurrentLayerDimensions.Width,
+                    ["height"] = context.CurrentLayerDimensions.Height
+                }
+            },
+            ["output"] = new Dictionary<string, object>
+            {
+                ["dimensions"] = new Dictionary<string, object>
+                {
+                    ["width"] = context.OutputDimensions.Width,
+                    ["height"] = context.OutputDimensions.Height
+                }
+            },
             ["random"] = (Func<JsValue, JsValue, double>)((min, max) =>
             {
                 if (min is not null && !min.IsUndefined() && max is not null && !max.IsUndefined())
@@ -273,11 +346,73 @@ public sealed class JsScriptHost
             }),
             ["rgb"] = engine.GetValue("rgb"),
             ["rgba"] = engine.GetValue("rgba"),
+            ["hsl"] = engine.GetValue("hsl"),
             ["hex"] = engine.GetValue("hex"),
+            ["color_ramp"] = engine.GetValue("color_ramp"),
             ["NAMED_COLORS"] = engine.GetValue("NAMED_COLORS"),
             ["ALIGN"] = engine.GetValue("ALIGN")
         };
 
         return JsValue.FromObject(engine, dict);
+    }
+
+    private static (byte R, byte G, byte B) HslToRgb(double h, double s, double l)
+    {
+        h = (h % 360.0 + 360.0) % 360.0;
+        if (s > 1.0) s /= 100.0;
+        if (l > 1.0) l /= 100.0;
+        s = Math.Clamp(s, 0.0, 1.0);
+        l = Math.Clamp(l, 0.0, 1.0);
+
+        var c = (1.0 - Math.Abs((2.0 * l) - 1.0)) * s;
+        var x = c * (1.0 - Math.Abs(((h / 60.0) % 2.0) - 1.0));
+        var m = l - (c / 2.0);
+
+        double r1, g1, b1;
+        if (h < 60) { r1 = c; g1 = x; b1 = 0; }
+        else if (h < 120) { r1 = x; g1 = c; b1 = 0; }
+        else if (h < 180) { r1 = 0; g1 = c; b1 = 0; }
+        else if (h < 240) { r1 = 0; g1 = x; b1 = c; }
+        else if (h < 300) { r1 = x; g1 = 0; b1 = c; }
+        else { r1 = c; g1 = 0; b1 = x; }
+
+        var r = (byte)Math.Clamp(Math.Round((r1 + m) * 255.0), 0, 255);
+        var g = (byte)Math.Clamp(Math.Round((g1 + m) * 255.0), 0, 255);
+        var b = (byte)Math.Clamp(Math.Round((b1 + m) * 255.0), 0, 255);
+        return (r, g, b);
+    }
+
+    private static (byte R, byte G, byte B, byte A) ExtractColorRgba(JsValue val)
+    {
+        if (val is ObjectInstance o)
+        {
+            if (o is Jint.Runtime.Interop.ObjectWrapper wrapper && wrapper.Target is ColorRgba colorRgba)
+            {
+                return (colorRgba.R, colorRgba.G, colorRgba.B, colorRgba.A);
+            }
+
+            var r = o.Get("r");
+            var g = o.Get("g");
+            var b = o.Get("b");
+            var a = o.Get("a");
+            if (r.IsNumber() && g.IsNumber() && b.IsNumber())
+            {
+                var byteR = (byte)Math.Clamp(r.AsNumber(), 0, 255);
+                var byteG = (byte)Math.Clamp(g.AsNumber(), 0, 255);
+                var byteB = (byte)Math.Clamp(b.AsNumber(), 0, 255);
+                var byteA = a.IsNumber() ? (byte)Math.Clamp(a.AsNumber(), 0, 255) : (byte)255;
+                return (byteR, byteG, byteB, byteA);
+            }
+        }
+        else if (val.IsString())
+        {
+            var str = val.AsString();
+            if (str.StartsWith('#') && SkiaSharp.SKColor.TryParse(str, out var skColor))
+            {
+                return (skColor.Red, skColor.Green, skColor.Blue, skColor.Alpha);
+            }
+        }
+
+        return (0, 0, 0, 255);
     }
 }

@@ -90,6 +90,8 @@ public sealed class GfxCanvasCompositor
             return new CanvasRenderResult(null, null, diagnostics.AsReadOnly());
         }
 
+        context.OutputDimensions = canvasDimensions.Value;
+
         // 2. Evaluate the layers block
         var layersResult = evaluator.EvaluatePath("layers");
         diagnostics.AddRange(layersResult.Diagnostics);
