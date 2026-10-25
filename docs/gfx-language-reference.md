@@ -208,6 +208,20 @@ Layers are declared in `layers = { ... }` in ascending draw order (first layer i
 - **`reaction_diffusion`** / **`turing`**: Deterministic 2D Gray-Scott reaction-diffusion solver (`preset = coral | spots | fingerprints | mitosis | worms | solitons`, `iterations`, `feed`, `kill`, `da`, `db`, `seed_mode = center | random_patches | ring | noise`, `color`).
 - **`sdf`**: Composable Signed Distance Field renderer supporting single shapes or `shapes = [ ... ]` CSG trees (`shape = circle | box | rounded_box | ring | segment | polygon | star | cross | vesica`, `op = union | smooth_union | subtract | smooth_subtract | intersect | smooth_intersect | xor`, `smoothness`, `mode = shape | isolines | distance`, `fill_color`, `stroke_color`, `stroke_width`, `glow`, `glow_color`).
 
+### Programmable Pixel Shaders (`shader` / `pixel_shader`)
+- **`shader`** / **`pixel_shader`**: Executes a per-pixel JavaScript function `(u, v, ctx, x, y)` or an SkSL fragment shader (`sksl = "..."`). Can be used as a standalone layer (`type = shader`) or as an inline filter on any layer (`shader = ...`).
+  - **JavaScript Return Formats** (channels clamped to `[0.0, 1.0]`, default `a = 1.0`):
+    - `[r, g, b]` or `[r, g, b, a]`
+    - `{ r, g, b }` or `{ r, g, b, a }`
+    - Scalar number `v` in `[0.0, 1.0]` (mapped through `color = color_ramp(...)`, or grayscale if omitted)
+  - **Context (`ctx`) & Intrinsics**:
+    - `u, v` (`[0.0, 1.0]`), `x, y` (pixel coords), `ctx.width`, `ctx.height`, `ctx.t` / `ctx.progress`, `ctx.time`, `ctx.seed`
+    - `ctx.pixel`: Underlying pixel `{ r, g, b, a }` in `[0.0, 1.0]`
+    - `ctx.sample(u, v, wrap?)`: Bilinearly samples the underlying canvas/layer in `[0.0, 1.0]`
+    - `ctx.sampleLayer("layer_id", u, v, wrap?)`: Bilinearly samples another named layer in `[0.0, 1.0]`
+    - `ctx.params` / `ctx.uniforms`: Custom parameters object (with `.gfx` colors normalized to `{ r, g, b, a }` in `[0.0, 1.0]`)
+    - Seeded noise & GLSL math helpers: `noise(x, y, z?)`, `signedNoise(x, y, z?)`, `fbm(x, y, z?, octaves?)`, `voronoi(x, y, jitter?)`, `hash(x, y)`, `clamp`, `mix`/`lerp`, `smoothstep`, `step`, `fract`, `mod`, `length`, `distance`, `dot`, `atan2`, `sin`, `cos`, `pow`, `sqrt`.
+
 ### Vector Shapes
 - **`rect`**: Rectangle or rounded rectangle (`fill_color`, `stroke_color`, `stroke_width`, `corner_radius`, `rotation`).
 - **`circle`**: Circle or ellipse (`fill_color`, `stroke_color`, `stroke_width`, `radius`).

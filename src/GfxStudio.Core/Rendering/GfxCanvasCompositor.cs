@@ -303,10 +303,37 @@ public sealed class GfxCanvasCompositor
         {
             if (renderer is EffectAdjustmentLayerRenderer adjustmentRenderer)
             {
-                isAdjustmentLayer = true;
-                rawBitmap = ExtractCanvasRegion(currentCanvas, offset, layerSize);
-                var effectContext = new EffectContext(layerId, layerProps, layerSpan, diagnostics, layerRandom, ResolveOtherLayerBitmap);
-                adjustmentRenderer.Effect.Apply(rawBitmap, effectContext);
+                if (adjustmentRenderer.Effect is PixelShaderEffect)
+                {
+                    isAdjustmentLayer = false;
+                    rawBitmap = new SKBitmap(new SKImageInfo(layerSize.Width, layerSize.Height, SKColorType.Rgba8888, SKAlphaType.Premul));
+                    rawBitmap.Erase(SKColors.Transparent);
+                    using var canvasSnapshot = ExtractCanvasRegion(currentCanvas, offset, layerSize);
+                    var effectContext = new EffectContext(
+                        layerId,
+                        layerProps,
+                        layerSpan,
+                        diagnostics,
+                        layerRandom,
+                        ResolveOtherLayerBitmap,
+                        context,
+                        canvasSnapshot);
+                    adjustmentRenderer.Effect.Apply(rawBitmap, effectContext);
+                }
+                else
+                {
+                    isAdjustmentLayer = true;
+                    rawBitmap = ExtractCanvasRegion(currentCanvas, offset, layerSize);
+                    var effectContext = new EffectContext(
+                        layerId,
+                        layerProps,
+                        layerSpan,
+                        diagnostics,
+                        layerRandom,
+                        ResolveOtherLayerBitmap,
+                        context);
+                    adjustmentRenderer.Effect.Apply(rawBitmap, effectContext);
+                }
             }
             else
             {
@@ -336,7 +363,7 @@ public sealed class GfxCanvasCompositor
 
         if (!isAdjustmentLayer)
         {
-            ApplyInlineLayerEffects(rawBitmap, layerProps, layerId, layerSpan, diagnostics, layerRandom, ResolveOtherLayerBitmap);
+            ApplyInlineLayerEffects(rawBitmap, layerProps, layerId, layerSpan, diagnostics, layerRandom, ResolveOtherLayerBitmap, context);
         }
 
         var transformed = ApplyLayerTransformIfNeeded(rawBitmap, layerProps, layerType, layerId, layerSpan, diagnostics);
@@ -400,7 +427,9 @@ public sealed class GfxCanvasCompositor
         ("crt", "crt", "scanline_opacity"),
         ("scanlines", "scanlines", "scanline_opacity"),
         ("oil_paint", "oil_paint", "radius"),
-        ("kuwahara", "kuwahara", "radius")
+        ("kuwahara", "kuwahara", "radius"),
+        ("shader", "shader", "fn"),
+        ("pixel_shader", "pixel_shader", "fn")
     ];
 
     private void ApplyInlineLayerEffects(
@@ -410,7 +439,8 @@ public sealed class GfxCanvasCompositor
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics,
         IGfxRandom layerRandom,
-        Func<string, SKBitmap?> resolveLayerBitmap)
+        Func<string, SKBitmap?> resolveLayerBitmap,
+        EvaluationContext context)
     {
         foreach (var (propName, effectName, scalarPropName) in InlineEffectBindings)
         {
@@ -425,7 +455,7 @@ public sealed class GfxCanvasCompositor
 
             if (effectProps is not null && _effectRegistry.TryGetEffect(effectName, out var inlineEffect))
             {
-                inlineEffect.Apply(bitmap, new EffectContext(layerId, effectProps, layerSpan, diagnostics, layerRandom, resolveLayerBitmap));
+                inlineEffect.Apply(bitmap, new EffectContext(layerId, effectProps, layerSpan, diagnostics, layerRandom, resolveLayerBitmap, context));
             }
         }
 
@@ -453,7 +483,7 @@ public sealed class GfxCanvasCompositor
                     continue;
                 }
 
-                effect.Apply(bitmap, new EffectContext(layerId, fxObj, layerSpan, diagnostics, layerRandom, resolveLayerBitmap));
+                effect.Apply(bitmap, new EffectContext(layerId, fxObj, layerSpan, diagnostics, layerRandom, resolveLayerBitmap, context));
             }
         }
     }
@@ -462,7 +492,8 @@ public sealed class GfxCanvasCompositor
         val switch
         {
             GfxObject obj => obj,
-            GfxNumber num => new GfxObject(new Dictionary<string, GfxValue>(StringComparer.Ordinal) { [scalarPropName] = num }, [scalarPropName]),
+            GfxNumber or GfxFunctionRef or GfxString or GfxSymbol =>
+                new GfxObject(new Dictionary<string, GfxValue>(StringComparer.Ordinal) { [scalarPropName] = val }, [scalarPropName]),
             _ => null
         };
 

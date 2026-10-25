@@ -1,0 +1,36 @@
+// Programmable Pixel Shader Showcase (.gfx + JavaScript Per-Pixel Functions)
+seed = 1984
+
+scripts = {
+  sh = "scripts/pixel_shaders.js"
+}
+
+output = {
+  mode = single
+  dimensions = { width = 192, height = 192 }
+  filename = "pixel_shaders.png"
+}
+
+layers = {
+  // 1. Per-pixel JS shader rendering a synthwave sky and perspective grid floor
+  background_shader = {
+    type = shader
+    fn = sh.synthwaveSky
+  }
+
+  // 2. Per-pixel JS shader rendering a scanline-sliced sunset orb with alpha compositing
+  sun_shader = {
+    type = shader
+    fn = sh.retroSun
+    params = {
+      center = { x = 0.5, y = 0.38 }
+      radius = 0.24
+    }
+  }
+
+  // 3. Inline per-pixel shader expression applying subtle radial color grading
+  color_grade = {
+    type = shader
+    fn = "(u, v, ctx) => { const p = ctx.pixel; const vig = 1.0 - length(u - 0.5, v - 0.5) * 0.35; return [p.r * vig, p.g * vig, p.b * vig, p.a]; }"
+  }
+}

@@ -20,6 +20,7 @@ public sealed class JsScriptHost
 {
     private readonly Engine _engine;
     private readonly Dictionary<string, Func<IReadOnlyList<JsValue>, EvaluationContext, JsValue>> _exports = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Function> _exportedFunctions = new(StringComparer.Ordinal);
 
     public JsScriptHost(string scriptContent, string scriptPath, EvaluationContext? initialContext = null)
     {
@@ -58,9 +59,14 @@ public sealed class JsScriptHost
 
     public string ScriptPath { get; }
 
+    internal Engine Engine => _engine;
+
     public IReadOnlyCollection<string> ExportedFunctionNames => _exports.Keys;
 
     public bool HasExport(string name) => _exports.ContainsKey(name);
+
+    internal bool TryGetExportedFunction(string name, out Function function) =>
+        _exportedFunctions.TryGetValue(name, out function!);
 
     public GfxValue InvokeExport(string name, IReadOnlyList<GfxValue> arguments, EvaluationContext context, SourceSpan callSpan)
     {
@@ -126,6 +132,7 @@ public sealed class JsScriptHost
                 if (val is Function fn)
                 {
                     var fnName = key.ToString();
+                    _exportedFunctions[fnName] = fn;
                     _exports[fnName] = (args, ctx) => fn.Call(JsValue.Undefined, args.ToArray());
                 }
             }
@@ -138,6 +145,11 @@ public sealed class JsScriptHost
 
         // Support CommonJS module.exports or top-level function declarations
         _engine.Execute("var module = { exports: {} }; var exports = module.exports;");
+        var globalObj = _engine.GetValue("globalThis").AsObject();
+        var initialGlobalKeys = globalObj.GetOwnProperties()
+            .Select(p => p.Key.ToString())
+            .ToHashSet(StringComparer.Ordinal);
+
         _engine.Execute(scriptContent);
 
         // Check module.exports
@@ -151,17 +163,17 @@ public sealed class JsScriptHost
                 if (val is Function fn)
                 {
                     var fnName = key.Key.ToString();
+                    _exportedFunctions[fnName] = fn;
                     _exports[fnName] = (args, ctx) => fn.Call(JsValue.Undefined, args.ToArray());
                 }
             }
         }
 
-        // Also inspect global scope for any callable functions
-        var globalObj = _engine.GetValue("globalThis").AsObject();
+        // Also inspect global scope for any user-defined callable functions
         foreach (var key in globalObj.GetOwnProperties())
         {
             var keyStr = key.Key.ToString();
-            if (keyStr.StartsWith("__") || keyStr is "module" or "exports" or "ctx" or "Math" or "Object" or "Array" or "String" or "Number" or "Boolean" or "Function" or "JSON" or "Date" or "RegExp" or "Error" or "parseInt" or "parseFloat" or "isNaN" or "isFinite" or "globalThis" or "Infinity" or "NaN" or "undefined")
+            if (initialGlobalKeys.Contains(keyStr) || keyStr.StartsWith("__"))
             {
                 continue;
             }
@@ -169,6 +181,7 @@ public sealed class JsScriptHost
             var val = globalObj.Get(key.Key);
             if (val is Function fn && !_exports.ContainsKey(keyStr))
             {
+                _exportedFunctions[keyStr] = fn;
                 _exports[keyStr] = (args, ctx) => fn.Call(JsValue.Undefined, args.ToArray());
             }
         }
@@ -283,6 +296,51 @@ public sealed class JsScriptHost
             ["TOP"] = "TOP",
             ["BOTTOM"] = "BOTTOM"
         });
+
+        // GLSL-style math & shader intrinsics
+        engine.Execute("""
+            const PI = Math.PI;
+            const TAU = Math.PI * 2;
+            const E = Math.E;
+            const sin = Math.sin;
+            const cos = Math.cos;
+            const tan = Math.tan;
+            const asin = Math.asin;
+            const acos = Math.acos;
+            const atan2 = Math.atan2;
+            const abs = Math.abs;
+            const floor = Math.floor;
+            const ceil = Math.ceil;
+            const round = Math.round;
+            const sqrt = Math.sqrt;
+            const pow = Math.pow;
+            const exp = Math.exp;
+            const log = Math.log;
+            const min = Math.min;
+            const max = Math.max;
+            const sign = Math.sign;
+            function clamp(x, lo = 0.0, hi = 1.0) { return x < lo ? lo : (x > hi ? hi : x); }
+            function fract(x) { return x - Math.floor(x); }
+            function mod(x, y) { return ((x % y) + y) % y; }
+            function step(edge, x) { return x < edge ? 0.0 : 1.0; }
+            function smoothstep(e0, e1, x) {
+                const t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+                return t * t * (3.0 - 2.0 * t);
+            }
+            function mix(a, b, t) {
+                if (Array.isArray(a) && Array.isArray(b)) {
+                    const n = Math.min(a.length, b.length);
+                    const out = new Array(n);
+                    for (let i = 0; i < n; i++) out[i] = a[i] + (b[i] - a[i]) * t;
+                    return out;
+                }
+                return a + (b - a) * t;
+            }
+            const lerp = mix;
+            function length(x, y = 0.0) { return Math.hypot(x, y); }
+            function distance(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+            function dot(x1, y1, x2, y2) { return x1 * x2 + y1 * y2; }
+            """);
     }
 
     private static JsValue CreateJsContext(Engine engine, EvaluationContext context)

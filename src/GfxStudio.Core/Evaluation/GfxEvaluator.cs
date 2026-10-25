@@ -313,7 +313,10 @@ public sealed class GfxEvaluator
                 return null;
             }
 
-            var finalValue = UnwrapPropertyValue(rawValue, node.Span);
+            var isCallbackProperty = node.Name is "fn" or "shader" or "pixel_fn" or "function" or "callback";
+            var finalValue = isCallbackProperty
+                ? rawValue
+                : UnwrapPropertyValue(rawValue, node.Span);
             // Only cache values that aren't backed by dynamic per-pass function references
             if (rawValue is not GfxFunctionRef)
             {

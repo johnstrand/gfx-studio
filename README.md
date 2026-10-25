@@ -21,7 +21,7 @@ A programmable, deterministic 2D generative graphics engine and domain-specific 
   5. `animation_gif` — Optimized animated GIFs with Floyd-Steinberg dithering and seamless 4D looping noise.
 - **Rich Procedural Layer Engine**: Multi-octave Perlin Fractal Brownian Motion (fBm), Worley (cellular) noise, Gray-Scott reaction-diffusion (`coral`, `spots`, `fingerprints`, `mitosis`), composable Signed Distance Fields (`sdf`) with smooth CSG operations, organic textures (`wood`, `marble`, `caustics`, `flow_field`, `starfield`), geometric patterns (`bricks`, `truchet`, `tiling`/`hex_grid`, `waves`, `spiral`, `checkerboard`, `stripes`, `grid`, `dots`), gradients, vector shapes, typography, and image loading.
 - **Compositing, Spatial Warps & Stylization Filters**: 18 blend modes, fBm & cross-layer displacement warping (`warp`/`displace`, `twirl`, `ripple`, `spherize`, `kaleidoscope`), surface relief (`emboss`, `bevel`, `normal_map`), print & retro dithering (`halftone`, `dither`, `stipple`, `edge_detect`), and post-processing (`bloom`, `vignette`, `chromatic_aberration`, `crt`, `oil_paint`, `gaussian_blur`, `drop_shadow`, `outline`, `posterize`, `pixelate`, `color_adjust`).
-- **Embedded JavaScript Engine**: Seamless integration with modern JavaScript (ES modules) via Jint for complex procedural logic.
+- **Embedded JavaScript & Programmable Pixel Shaders**: Seamless integration with modern JavaScript (ES modules) via Jint for both per-pass procedural logic and per-pixel fragment shaders (`(u, v, ctx, x, y) => [r, g, b, a]` in `0.0..1.0` with GLSL math, seeded noise intrinsics, and cross-layer texture sampling), plus SkSL shader support.
 
 ---
 
@@ -109,6 +109,13 @@ Combines `starfield`, `reaction_diffusion`, `caustics`, composable `sdf` CSG pri
 
 ```bash
 gfx render samples/procedural_showcase.gfx --output-dir ./output_showcase
+```
+
+### 8. Programmable Per-Pixel Shaders (`samples/pixel_shaders.gfx`)
+Synthwave sunset and perspective grid rendered using per-pixel JavaScript shader functions from `samples/scripts/pixel_shaders.js`:
+
+```bash
+gfx render samples/pixel_shaders.gfx --output-dir ./output_shaders
 ```
 
 ---

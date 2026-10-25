@@ -16,7 +16,9 @@ public sealed class EffectContext
         SourceSpan span = default,
         List<GfxDiagnostic>? diagnostics = null,
         IGfxRandom? random = null,
-        Func<string, SKBitmap?>? resolveLayerBitmap = null)
+        Func<string, SKBitmap?>? resolveLayerBitmap = null,
+        EvaluationContext? evaluationContext = null,
+        SKBitmap? sampleSource = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(layerId);
         ArgumentNullException.ThrowIfNull(properties);
@@ -29,6 +31,8 @@ public sealed class EffectContext
         _diagnostics = diagnostics ?? [];
         Random = random ?? new GfxRandom(0);
         ResolveLayerBitmap = resolveLayerBitmap;
+        EvaluationContext = evaluationContext;
+        SampleSource = sampleSource;
     }
 
     public string LayerId { get; }
@@ -40,6 +44,10 @@ public sealed class EffectContext
     public IGfxRandom Random { get; }
 
     public Func<string, SKBitmap?>? ResolveLayerBitmap { get; }
+
+    public EvaluationContext? EvaluationContext { get; }
+
+    public SKBitmap? SampleSource { get; }
 
     public IReadOnlyList<GfxDiagnostic> Diagnostics => _diagnostics;
 
@@ -106,6 +114,10 @@ public sealed class LayerEffectRegistry
         registry.Register(new CrtScanlinesEffect("scanlines"));
         registry.Register(new KuwaharaEffect("oil_paint"));
         registry.Register(new KuwaharaEffect("kuwahara"));
+
+        // Programmable per-pixel shader engine (#26)
+        registry.Register(new PixelShaderEffect("shader"));
+        registry.Register(new PixelShaderEffect("pixel_shader"));
         return registry;
     }
 
@@ -141,7 +153,12 @@ public sealed class EffectAdjustmentLayerRenderer : ILayerRenderer
     {
         ArgumentNullException.ThrowIfNull(context);
         var bitmap = context.CreateLayerBitmap();
-        var effectContext = new EffectContext(context.LayerId, context.LayerProperties, context.LayerSpan, random: context.Random);
+        var effectContext = new EffectContext(
+            context.LayerId,
+            context.LayerProperties,
+            context.LayerSpan,
+            random: context.Random,
+            evaluationContext: context.EvaluationContext);
         _effect.Apply(bitmap, effectContext);
         foreach (var diag in effectContext.Diagnostics)
         {
