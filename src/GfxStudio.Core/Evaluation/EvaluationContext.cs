@@ -10,13 +10,15 @@ public readonly record struct RunContext(int Number = 0, int Count = 1, ulong Se
 {
     public GfxObject ToGfxObject()
     {
+        var number = new GfxNumber(Number);
         var props = new Dictionary<string, GfxValue>(StringComparer.Ordinal)
         {
-            ["number"] = new GfxNumber(Number),
+            ["number"] = number,
+            ["index"] = number,
             ["count"] = new GfxNumber(Count),
             ["seed"] = new GfxNumber(Seed)
         };
-        return new GfxObject(props, ["number", "count", "seed"]);
+        return new GfxObject(props, ["number", "index", "count", "seed"]);
     }
 }
 
@@ -29,16 +31,18 @@ public readonly record struct FrameContext(int Number = 0, int Count = 1, double
 
     public GfxObject ToGfxObject()
     {
+        var number = new GfxNumber(Number);
         var progress = new GfxNumber(Progress);
         var props = new Dictionary<string, GfxValue>(StringComparer.Ordinal)
         {
-            ["number"] = new GfxNumber(Number),
+            ["number"] = number,
+            ["index"] = number,
             ["count"] = new GfxNumber(Count),
             ["time"] = new GfxNumber(Time),
             ["progress"] = progress,
             ["t"] = progress
         };
-        return new GfxObject(props, ["number", "count", "time", "progress", "t"]);
+        return new GfxObject(props, ["number", "index", "count", "time", "progress", "t"]);
     }
 }
 

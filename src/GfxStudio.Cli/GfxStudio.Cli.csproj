@@ -3,9 +3,23 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>gfx</AssemblyName>
     <RootNamespace>GfxStudio.Cli</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>gfx</ToolCommandName>
+    <PackageId>gfx-studio</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>John Strand</Authors>
+    <Description>Command-line interface for GfxStudio, a deterministic 2D generative graphics engine.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/johnstrand/gfx-studio</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>graphics;cli;generative;procedural;dsl;tool</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\GfxStudio.Core\GfxStudio.Core.csproj" />
     <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 </Project>

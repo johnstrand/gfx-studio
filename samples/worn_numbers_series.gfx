@@ -1,0 +1,42 @@
+layers = {
+  background = {
+    type = fill
+    color = rgb(30, 41, 59)
+  }
+  clouds = {
+    type = fractal_clouds
+    scale = 3.5
+    octaves = 4
+    color = color_ramp(rgb(236, 72, 153), rgb(59, 130, 246))
+    mix = screen
+    size = output.dimensions
+  }
+  border = {
+    type = rect
+    stroke_color = rgba(255, 255, 255, 120)
+    stroke_width = 2
+    corner_radius = 4
+    size = output.dimensions
+  }
+  number = {
+    type = text
+    size = output.dimensions
+    text = run.index + 1
+    font_size = 32
+    color = rgb(255, 255, 255)
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.CENTER }
+    drop_shadow = {
+      offset = { x = 2, y = 2 }
+      blur = 2
+      color = rgba(0, 0, 0, 200)
+    }
+  }
+}
+
+output = {
+  mode = series
+  dimensions = { width = 64, height = 64 }
+  count = 20
+  start_index = 0
+  filename = "worn_number_${run.index:0000}.png"
+}

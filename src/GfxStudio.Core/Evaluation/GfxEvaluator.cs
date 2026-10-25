@@ -4,6 +4,7 @@ using GfxStudio.Core.Parsing;
 using GfxStudio.Core.Parsing.Ast;
 using GfxStudio.Core.Primitives;
 using GfxStudio.Core.Randomness;
+using GfxStudio.Core.Scripting;
 
 namespace GfxStudio.Core.Evaluation;
 
@@ -46,6 +47,86 @@ public sealed class GfxEvaluator
                 }
 
                 _rootAstProperties[prop.Name] = prop;
+            }
+
+            InitializeScripts(context);
+        }
+    }
+
+    private void InitializeScripts(EvaluationContext context)
+    {
+        if (context.Document is null) return;
+
+        var baseDir = !string.IsNullOrWhiteSpace(context.Document.Span.FilePath) && context.Document.Span.FilePath != "<memory>"
+            ? Path.GetDirectoryName(Path.GetFullPath(context.Document.Span.FilePath)) ?? Environment.CurrentDirectory
+            : Environment.CurrentDirectory;
+
+        if (_rootAstProperties.TryGetValue("script", out var scriptNode) && scriptNode.Value is StringLiteralExpr scriptPathExpr)
+        {
+            var fullPath = Path.GetFullPath(Path.Combine(baseDir, scriptPathExpr.Value));
+            if (File.Exists(fullPath))
+            {
+                try
+                {
+                    var content = File.ReadAllText(fullPath);
+                    var host = new JsScriptHost(content, fullPath, context);
+                    foreach (var fnName in host.ExportedFunctionNames)
+                    {
+                        context.RegisterFunction(new JsCallable(host, fnName));
+                    }
+                }
+                catch (GfxException ex)
+                {
+                    _diagnostics.AddRange(ex.Diagnostics);
+                }
+                catch (Exception ex)
+                {
+                    AddDiagnostic("JS006", $"Could not load script '{scriptPathExpr.Value}': {ex.Message}", scriptNode.Span);
+                }
+            }
+            else
+            {
+                AddDiagnostic("JS006", $"Referenced script file '{scriptPathExpr.Value}' not found at '{fullPath}'.", scriptNode.Span);
+            }
+        }
+
+        if (_rootAstProperties.TryGetValue("scripts", out var scriptsNode) && scriptsNode.Value is ObjectBlockExpr scriptsBlock)
+        {
+            foreach (var prop in scriptsBlock.Properties)
+            {
+                if (prop.Value is StringLiteralExpr pathExpr)
+                {
+                    var fullPath = Path.GetFullPath(Path.Combine(baseDir, pathExpr.Value));
+                    if (File.Exists(fullPath))
+                    {
+                        try
+                        {
+                            var content = File.ReadAllText(fullPath);
+                            var host = new JsScriptHost(content, fullPath, context);
+                            var fnMap = new Dictionary<string, GfxValue>(StringComparer.Ordinal);
+                            var fnKeys = new List<string>();
+                            foreach (var fnName in host.ExportedFunctionNames)
+                            {
+                                fnMap[fnName] = new GfxFunctionRef(new JsCallable(host, fnName));
+                                fnKeys.Add(fnName);
+                            }
+
+                            context.SetVariable(prop.Name, new GfxObject(fnMap, fnKeys.AsReadOnly()));
+                        }
+                        catch (GfxException ex)
+                        {
+                            _diagnostics.AddRange(ex.Diagnostics);
+                        }
+                        catch (Exception ex)
+                        {
+                            AddDiagnostic("JS006", $"Could not load script '{pathExpr.Value}': {ex.Message}", prop.Span);
+                        }
+                    }
+                    else
+                    {
+                        AddDiagnostic("JS006", $"Referenced script file '{pathExpr.Value}' not found at '{fullPath}'.", prop.Span);
+                    }
+                }
             }
         }
     }

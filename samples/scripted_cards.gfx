@@ -1,0 +1,43 @@
+scripts = {
+  cards = "scripts/card_generator.js"
+}
+
+layers = {
+  card_bg = {
+    type = rect
+    fill_color = rgb(255, 255, 255)
+    stroke_color = rgb(203, 213, 225)
+    stroke_width = 2
+    corner_radius = 6
+    size = output.dimensions
+  }
+  center_suit = {
+    type = text
+    size = output.dimensions
+    text = cards.getCardSuit(run.index)
+    color = cards.getCardColor(run.index)
+    font_size = 40
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.CENTER }
+  }
+  corner_rank = {
+    type = text
+    size = { width = output.dimensions.width, height = 30 }
+    text = cards.getCardRank(run.index)
+    color = cards.getCardColor(run.index)
+    font_size = 18
+    align = { vertical: ALIGN.TOP, horizontal: ALIGN.LEFT }
+    offset = { x = 6, y = 6 }
+  }
+}
+
+output = {
+  mode = image_map
+  dimensions = { width = 80, height = 112 }
+  count = 12
+  columns = 4
+  padding = 4
+  spacing = 4
+  background = rgb(22, 101, 52)
+  filename = "scripted_cards.png"
+  metadata_filename = "scripted_cards.json"
+}

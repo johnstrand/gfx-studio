@@ -1,0 +1,40 @@
+layers = {
+  background = {
+    type = fill
+    color = rgb(24, 24, 27)
+  }
+  clouds = {
+    type = fractal_clouds
+    scale = 3.0
+    octaves = 4
+    color = color_ramp(rgb(249, 115, 22), rgb(234, 179, 8))
+    mix = overlay
+    size = output.dimensions
+  }
+  border = {
+    type = rect
+    stroke_color = rgba(255, 255, 255, 100)
+    stroke_width = 1
+    size = output.dimensions
+  }
+  label = {
+    type = text
+    size = output.dimensions
+    text = run.index + 1
+    font_size = 28
+    color = rgb(255, 255, 255)
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.CENTER }
+  }
+}
+
+output = {
+  mode = image_map
+  dimensions = { width = 48, height = 48 }
+  count = 20
+  columns = 4
+  padding = 2
+  spacing = 2
+  background = rgb(15, 23, 42)
+  filename = "worn_numbers_atlas.png"
+  metadata_filename = "worn_numbers_atlas.json"
+}

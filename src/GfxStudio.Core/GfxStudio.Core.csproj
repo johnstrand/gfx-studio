@@ -1,6 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <RootNamespace>GfxStudio.Core</RootNamespace>
+    <PackageId>GfxStudio.Core</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>John Strand</Authors>
+    <Description>Deterministic 2D generative graphics engine and domain-specific language for procedural textures, sprites, and animations.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/johnstrand/gfx-studio</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>graphics;generative;procedural;dsl;skiasharp;texture;spritesheet;gif</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Jint" />
@@ -9,5 +20,6 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\Fonts\Roboto.ttf" LogicalName="GfxStudio.Core.Resources.Fonts.Roboto.ttf" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 </Project>

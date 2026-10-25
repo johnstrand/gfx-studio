@@ -1,0 +1,36 @@
+layers = {
+  bg = {
+    type = fill
+    color = rgb(15, 23, 42)
+  }
+  clouds = {
+    type = fractal_clouds
+    scale = 2.5
+    octaves = 4
+    phase = frame.progress * 2.0
+    color = color_ramp(rgb(14, 165, 233), rgb(168, 85, 247), rgb(236, 72, 153))
+    mix = screen
+    size = output.dimensions
+  }
+  text_layer = {
+    type = text
+    size = output.dimensions
+    text = "FRAME " + (frame.index + 1)
+    font_size = 18 + (sin(frame.progress * PI * 2) * 4)
+    color = rgb(255, 255, 255)
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.CENTER }
+    drop_shadow = {
+      offset = { x = 1, y = 2 }
+      blur = 2
+      color = rgba(0, 0, 0, 200)
+    }
+  }
+}
+
+output = {
+  mode = animation_frames
+  dimensions = { width = 128, height = 64 }
+  frames = 10
+  fps = 10
+  filename = "evolving_clouds_frame_${frame.index:0000}.png"
+}

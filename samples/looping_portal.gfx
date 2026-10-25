@@ -1,0 +1,52 @@
+layers = {
+  bg = {
+    type = fill
+    color = rgb(10, 10, 20)
+  }
+  clouds = {
+    type = fractal_clouds
+    scale = 3.0
+    octaves = 4
+    phase = frame.progress
+    loop_seamless = true
+    color = color_ramp(rgb(30, 27, 75), rgb(139, 92, 246), rgb(236, 72, 153))
+    size = output.dimensions
+  }
+  cells = {
+    type = worley
+    cell_size = 20
+    color = color_ramp(rgba(0, 0, 0, 0), rgba(255, 255, 255, 120))
+    mix = overlay
+    size = output.dimensions
+  }
+  glow = {
+    type = gradient
+    style = "radial"
+    center = { x = 64, y = 64 }
+    radius = 50
+    color = color_ramp(rgba(56, 189, 248, 200), rgba(15, 23, 42, 0))
+    mix = screen
+    size = output.dimensions
+  }
+  title = {
+    type = text
+    size = output.dimensions
+    text = "PORTAL"
+    font_size = 20
+    color = rgb(255, 255, 255)
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.CENTER }
+    drop_shadow = {
+      offset = { x = 0, y = 2 }
+      blur = 3
+      color = rgba(0, 0, 0, 220)
+    }
+  }
+}
+
+output = {
+  mode = animation_gif
+  dimensions = { width = 128, height = 128 }
+  frames = 12
+  fps = 10
+  filename = "looping_portal.gif"
+}

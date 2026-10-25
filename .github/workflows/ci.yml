@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore GfxStudio.sln
+
+      - name: Build solution
+        run: dotnet build GfxStudio.sln --configuration Release --no-restore
+
+      - name: Run unit & golden tests
+        run: dotnet test GfxStudio.sln --configuration Release --no-build --verbosity normal
+
+      - name: Pack NuGet packages
+        run: dotnet pack GfxStudio.sln --configuration Release --no-build
+
+      - name: Test CLI rendering
+        run: |
+          dotnet run --project src/GfxStudio.Cli/GfxStudio.Cli.csproj --configuration Release --no-build -- render samples/number.gfx --output-dir ci_out
+          dotnet run --project src/GfxStudio.Cli/GfxStudio.Cli.csproj --configuration Release --no-build -- render samples/worn_numbers_atlas.gfx --output-dir ci_out
+          dotnet run --project src/GfxStudio.Cli/GfxStudio.Cli.csproj --configuration Release --no-build -- render samples/looping_portal.gfx --output-dir ci_out
+          dotnet run --project src/GfxStudio.Cli/GfxStudio.Cli.csproj --configuration Release --no-build -- render samples/scripted_cards.gfx --output-dir ci_out
