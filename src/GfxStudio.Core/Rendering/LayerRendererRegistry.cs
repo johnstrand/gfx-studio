@@ -1,4 +1,5 @@
 using GfxStudio.Core.Rendering.Layers;
+using GfxStudio.Core.Rendering.Layers.Patterns;
 using GfxStudio.Core.Rendering.Layers.Shapes;
 
 namespace GfxStudio.Core.Rendering;
@@ -18,6 +19,15 @@ public sealed class LayerRendererRegistry
         var registry = new LayerRendererRegistry();
         registry.Register(new FillLayerRenderer());
         registry.Register(new FractalCloudsLayerRenderer());
+        registry.Register(new FractalCloudsLayerRenderer("perlin", defaultOctaves: 1));
+        registry.Register(new FractalCloudsLayerRenderer("simplex", defaultOctaves: 1));
+        registry.Register(new WorleyLayerRenderer("worley"));
+        registry.Register(new WorleyLayerRenderer("voronoi"));
+        registry.Register(new CheckerboardLayerRenderer());
+        registry.Register(new StripesLayerRenderer());
+        registry.Register(new GridLayerRenderer());
+        registry.Register(new DotsLayerRenderer());
+        registry.Register(new ImageLayerRenderer());
         registry.Register(new TextLayerRenderer());
         registry.Register(new GradientLayerRenderer());
         registry.Register(new RectLayerRenderer());

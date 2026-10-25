@@ -17,7 +17,16 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
         new ColorStop(1.0f, ColorRgba.Black)
     ]);
 
-    public string LayerType => "fractal_clouds";
+    private readonly int _defaultOctaves;
+
+    public FractalCloudsLayerRenderer(string layerType = "fractal_clouds", int defaultOctaves = 5)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(layerType);
+        LayerType = layerType;
+        _defaultOctaves = Math.Clamp(defaultOctaves, 1, 12);
+    }
+
+    public string LayerType { get; }
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -30,31 +39,52 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
             return bitmap;
         }
 
-        var scale = ResolvePositiveDouble(context, "scale", "frequency", defaultValue: 4.0);
-        var octaves = ResolveInt(context, "octaves", defaultValue: 5);
+        var scale = ResolveScaleDouble(context, defaultValue: 4.0);
+        var octaves = ResolveInt(context, "octaves", defaultValue: _defaultOctaves);
         var persistence = ResolveDouble(context, "persistence", "gain", defaultValue: 0.5);
         var lacunarity = ResolvePositiveDouble(context, "lacunarity", null, defaultValue: 2.0);
         var phase = ResolveDouble(context, "phase", "z", defaultValue: 0.0);
         var loopSeamless = ResolveBool(context, "loop_seamless", defaultValue: false);
+        var warpStrength = ResolveDouble(context, "warp_strength", null, defaultValue: 0.0);
+        var warpScale = ResolvePositiveDouble(context, "warp_scale", null, defaultValue: scale);
 
         var noise = new PerlinNoise(context.Random);
         var fbm = new FractalBrownianMotion(noise, octaves, persistence, lacunarity);
+        PerlinNoise? warpNoiseX = null;
+        PerlinNoise? warpNoiseY = null;
+        if (Math.Abs(warpStrength) > 0.0)
+        {
+            warpNoiseX = new PerlinNoise(context.Random);
+            warpNoiseY = new PerlinNoise(context.Random);
+        }
 
         var width = bitmap.Width;
         var height = bitmap.Height;
         var invWidth = width > 0 ? scale / width : 0.0;
         var invHeight = height > 0 ? scale / height : 0.0;
+        var invWarpW = width > 0 ? warpScale / width : 0.0;
+        var invWarpH = height > 0 ? warpScale / height : 0.0;
 
         var pixelBuffer = new byte[width * height * 4];
 
         for (var y = 0; y < height; y++)
         {
-            var ny = y * invHeight;
+            var baseNy = y * invHeight;
+            var wy = y * invWarpH;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
                 var nx = x * invWidth;
+                var ny = baseNy;
+
+                if (warpNoiseX is not null && warpNoiseY is not null)
+                {
+                    var wx = x * invWarpW;
+                    nx += warpStrength * warpNoiseX.Sample3D(wx, wy, phase);
+                    ny += warpStrength * warpNoiseY.Sample3D(wx, wy, phase);
+                }
+
                 var value = loopSeamless
                     ? fbm.SampleSeamlessLoop(nx, ny, phase)
                     : fbm.Sample3D(nx, ny, phase);
@@ -62,35 +92,29 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
                 var sampled = colorRamp.Sample(value);
                 var pixelIndex = rowOffset + (x * 4);
 
-                if (sampled.A == byte.MaxValue)
-                {
-                    pixelBuffer[pixelIndex] = sampled.R;
-                    pixelBuffer[pixelIndex + 1] = sampled.G;
-                    pixelBuffer[pixelIndex + 2] = sampled.B;
-                    pixelBuffer[pixelIndex + 3] = byte.MaxValue;
-                }
-                else if (sampled.A == 0)
-                {
-                    pixelBuffer[pixelIndex] = 0;
-                    pixelBuffer[pixelIndex + 1] = 0;
-                    pixelBuffer[pixelIndex + 2] = 0;
-                    pixelBuffer[pixelIndex + 3] = 0;
-                }
-                else
-                {
-                    // Premultiply RGB by alpha for SKAlphaType.Premul
-                    var alphaFactor = sampled.A / 255.0f;
-                    pixelBuffer[pixelIndex] = (byte)Math.Round(sampled.R * alphaFactor);
-                    pixelBuffer[pixelIndex + 1] = (byte)Math.Round(sampled.G * alphaFactor);
-                    pixelBuffer[pixelIndex + 2] = (byte)Math.Round(sampled.B * alphaFactor);
-                    pixelBuffer[pixelIndex + 3] = sampled.A;
-                }
+                WorleyLayerRenderer.WritePremulPixel(pixelBuffer, pixelIndex, sampled);
             }
         }
 
         Marshal.Copy(pixelBuffer, 0, bitmap.GetPixels(), pixelBuffer.Length);
 
         return bitmap;
+    }
+
+    private static double ResolveScaleDouble(LayerRenderContext context, double defaultValue)
+    {
+        // Note: if 'scale' is an object `{ x = ..., y = ... }`, it is a 2D transform scale, not noise frequency.
+        if (context.LayerProperties.TryGetProperty("scale", out var scaleVal) && scaleVal is GfxObject)
+        {
+            if (context.LayerProperties.TryGetProperty("frequency", out _))
+            {
+                return ResolvePositiveDouble(context, "frequency", null, defaultValue);
+            }
+
+            return defaultValue;
+        }
+
+        return ResolvePositiveDouble(context, "scale", "frequency", defaultValue);
     }
 
     private static ColorRamp? ResolveColorRamp(LayerRenderContext context)
