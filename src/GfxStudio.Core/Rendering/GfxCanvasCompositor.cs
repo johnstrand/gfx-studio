@@ -40,7 +40,9 @@ public sealed class GfxCanvasCompositor
         "enabled",
         "seed",
         "mask",
+        "copy",
         "rotation",
+        "shear",
         "scale",
         "transform_scale",
         "flip_x",
@@ -159,6 +161,121 @@ public sealed class GfxCanvasCompositor
         var defaultSpan = context.Document?.Span
             ?? new SourceSpan("<memory>", new SourceLocation(1, 1, 0), new SourceLocation(1, 1, 0));
 
+        var resolvedLayerProperties = new Dictionary<string, GfxObject>(StringComparer.Ordinal);
+        var invalidLayerCopies = new HashSet<string>(StringComparer.Ordinal);
+        var resolvingLayerCopies = new HashSet<string>(StringComparer.Ordinal);
+        var layerCopyStack = new List<string>();
+
+        bool TryResolveLayerProperties(string layerId, out GfxObject resolved)
+        {
+            if (resolvedLayerProperties.TryGetValue(layerId, out resolved!)) return true;
+            if (invalidLayerCopies.Contains(layerId))
+            {
+                resolved = null!;
+                return false;
+            }
+
+            if (!layersObject.Properties.TryGetValue(layerId, out var value) || value is not GfxObject ownProperties)
+            {
+                resolved = null!;
+                return false;
+            }
+
+            if (!resolvingLayerCopies.Add(layerId))
+            {
+                var cycle = string.Join(" -> ", layerCopyStack.Append(layerId));
+                diagnostics.Add(new GfxDiagnostic(
+                    "RND052",
+                    $"Layer copy cycle detected: {cycle}.",
+                    layerSpans.GetValueOrDefault(layerId, defaultSpan),
+                    DiagnosticSeverity.Error));
+                invalidLayerCopies.Add(layerId);
+                resolved = null!;
+                return false;
+            }
+
+            layerCopyStack.Add(layerId);
+            try
+            {
+                var mergedProperties = new Dictionary<string, GfxValue>(StringComparer.Ordinal);
+                var orderedKeys = new List<string>();
+
+                if (ownProperties.TryGetProperty("copy", out var copyValue))
+                {
+                    var sourceLayerId = copyValue switch
+                    {
+                        GfxSymbol symbol => symbol.Identifier,
+                        GfxString text => text.Value,
+                        _ => null
+                    };
+
+                    if (string.IsNullOrWhiteSpace(sourceLayerId)
+                        || !layersObject.Properties.TryGetValue(sourceLayerId, out var sourceValue)
+                        || sourceValue is not GfxObject)
+                    {
+                        diagnostics.Add(new GfxDiagnostic(
+                            "RND051",
+                            $"Property 'copy' on layer '{layerId}' must reference an existing layer by name.",
+                            layerAstMap.GetValueOrDefault(layerId)?.PropertySpans.GetValueOrDefault("copy")
+                                ?? layerSpans.GetValueOrDefault(layerId, defaultSpan),
+                            DiagnosticSeverity.Error));
+                        invalidLayerCopies.Add(layerId);
+                        resolved = null!;
+                        return false;
+                    }
+
+                    if (!TryResolveLayerProperties(sourceLayerId, out var sourceProperties))
+                    {
+                        invalidLayerCopies.Add(layerId);
+                        resolved = null!;
+                        return false;
+                    }
+
+                    foreach (var sourceKey in sourceProperties.OrderedKeys)
+                    {
+                        if (sourceProperties.Properties.TryGetValue(sourceKey, out var sourceProperty))
+                        {
+                            mergedProperties[sourceKey] = sourceProperty;
+                            orderedKeys.Add(sourceKey);
+                        }
+                    }
+                }
+
+                foreach (var ownKey in ownProperties.OrderedKeys)
+                {
+                    if (string.Equals(ownKey, "copy", StringComparison.OrdinalIgnoreCase)
+                        || !ownProperties.Properties.TryGetValue(ownKey, out var ownValue))
+                    {
+                        continue;
+                    }
+
+                    if (!mergedProperties.ContainsKey(ownKey))
+                    {
+                        orderedKeys.Add(ownKey);
+                    }
+
+                    mergedProperties[ownKey] = ownValue;
+                }
+
+                resolved = new GfxObject(mergedProperties, orderedKeys.AsReadOnly());
+                resolvedLayerProperties[layerId] = resolved;
+                return true;
+            }
+            finally
+            {
+                layerCopyStack.RemoveAt(layerCopyStack.Count - 1);
+                resolvingLayerCopies.Remove(layerId);
+            }
+        }
+
+        foreach (var layerId in layersObject.OrderedKeys)
+        {
+            if (layersObject.Properties.TryGetValue(layerId, out var layerValue) && layerValue is GfxObject)
+            {
+                TryResolveLayerProperties(layerId, out _);
+            }
+        }
+
         var canvas = new SKBitmap(new SKImageInfo(
             canvasDimensions.Width,
             canvasDimensions.Height,
@@ -177,13 +294,18 @@ public sealed class GfxCanvasCompositor
                 }
 
                 var layerSpan = layerSpans.GetValueOrDefault(layerId, defaultSpan);
-                if (layerValue is not GfxObject layerProps)
+                if (layerValue is not GfxObject)
                 {
                     diagnostics.Add(new GfxDiagnostic(
                         "RND002",
                         $"Layer '{layerId}' must be an object block.",
                         layerSpan,
                         DiagnosticSeverity.Error));
+                    continue;
+                }
+
+                if (!resolvedLayerProperties.TryGetValue(layerId, out var layerProps))
+                {
                     continue;
                 }
 
@@ -610,12 +732,15 @@ public sealed class GfxCanvasCompositor
         }
 
         var (scaleX, scaleY) = ExtractLayerTransformScale(layerProps, layerType, layerId, layerSpan, diagnostics);
+        var (shearX, shearY) = ExtractLayerShear(layerProps, layerId, layerSpan, diagnostics);
         var flipX = ExtractLayerBoolean(layerProps, "flip_x", layerId, layerSpan, diagnostics);
         var flipY = ExtractLayerBoolean(layerProps, "flip_y", layerId, layerSpan, diagnostics);
 
         if (Math.Abs(rotation) < 1e-5f
             && Math.Abs(scaleX - 1.0f) < 1e-5f
             && Math.Abs(scaleY - 1.0f) < 1e-5f
+            && Math.Abs(shearX) < 1e-5f
+            && Math.Abs(shearY) < 1e-5f
             && !flipX
             && !flipY)
         {
@@ -628,7 +753,9 @@ public sealed class GfxCanvasCompositor
         // Exact pixel flip when there is no rotation or scaling
         if (Math.Abs(rotation) < 1e-5f
             && Math.Abs(scaleX - 1.0f) < 1e-5f
-            && Math.Abs(scaleY - 1.0f) < 1e-5f)
+            && Math.Abs(scaleY - 1.0f) < 1e-5f
+            && Math.Abs(shearX) < 1e-5f
+            && Math.Abs(shearY) < 1e-5f)
         {
             var flipped = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
             for (var y = 0; y < height; y++)
@@ -654,6 +781,7 @@ public sealed class GfxCanvasCompositor
         using var canvas = new SKCanvas(dest);
         canvas.Translate(anchorX, anchorY);
         canvas.RotateDegrees(rotation);
+        canvas.Skew(shearX, shearY);
         canvas.Scale(finalScaleX, finalScaleY);
         canvas.Translate(-anchorX, -anchorY);
 
@@ -669,6 +797,32 @@ public sealed class GfxCanvasCompositor
         canvas.DrawBitmap(source, 0, 0, paint);
         canvas.Flush();
         return dest;
+    }
+
+    private static (float X, float Y) ExtractLayerShear(
+        GfxObject layerProps,
+        string layerId,
+        SourceSpan layerSpan,
+        List<GfxDiagnostic> diagnostics)
+    {
+        if (!layerProps.TryGetProperty("shear", out var shearVal))
+        {
+            return (0.0f, 0.0f);
+        }
+
+        if (shearVal.TryCoerceToPoint2D(out var shear)
+            && float.IsFinite(shear.X)
+            && float.IsFinite(shear.Y))
+        {
+            return (shear.X, shear.Y);
+        }
+
+        diagnostics.Add(new GfxDiagnostic(
+            "RND036",
+            $"Property 'shear' on layer '{layerId}' must be an object with finite numeric x and y values.",
+            layerSpan,
+            DiagnosticSeverity.Error));
+        return (0.0f, 0.0f);
     }
 
     private static (float ScaleX, float ScaleY) ExtractLayerTransformScale(

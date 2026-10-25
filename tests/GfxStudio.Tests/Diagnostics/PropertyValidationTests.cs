@@ -256,6 +256,7 @@ public sealed class PropertyValidationTests
                 visible = true
                 enabled = true
                 rotation = 0
+                shear = { x = 0, y = 0 }
                 scale = 1.0
                 transform_scale = 1.0
                 flip_x = false

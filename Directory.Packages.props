@@ -3,6 +3,9 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
+    <PackageVersion Include="Avalonia" Version="11.3.0" />
+    <PackageVersion Include="Avalonia.Desktop" Version="11.3.0" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.3.0" />
     <PackageVersion Include="SkiaSharp" Version="2.88.9" />
     <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="2.88.9" />
     <PackageVersion Include="Jint" Version="4.1.0" />

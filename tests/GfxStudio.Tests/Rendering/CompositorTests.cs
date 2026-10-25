@@ -94,6 +94,120 @@ public sealed class CompositorTests
     }
 
     [Fact]
+    public void RenderSource_CopiesLayerPropertiesAndAppliesOverrides()
+    {
+        const string source = """
+            layers = {
+              original = {
+                type = test_solid
+                color = rgb(255, 0, 0)
+                size = { width = 2, height = 2 }
+              }
+              duplicate = {
+                copy = original
+                color = rgb(0, 255, 0)
+                offset = { x = 3, y = 3 }
+              }
+              duplicate_again = {
+                copy = duplicate
+                color = rgb(0, 0, 255)
+                offset = { x = 6, y = 0 }
+              }
+            }
+            output = { dimensions = { width = 8, height = 8 } }
+            """;
+
+        var renderedLayers = new List<string>();
+        var compositor = new GfxCanvasCompositor(LayerRendererRegistry.CreateDefault([
+            new TestSolidLayerRenderer(renderedLayers)]));
+
+        using var result = compositor.RenderSource(source);
+
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+        result.Diagnostics.Should().BeEmpty();
+        renderedLayers.Should().Equal("original", "duplicate", "duplicate_again");
+        result.Bitmap!.GetPixel(0, 0).Should().Be(new SKColor(255, 0, 0, 255));
+        result.Bitmap.GetPixel(3, 3).Should().Be(new SKColor(0, 255, 0, 255));
+        result.Bitmap.GetPixel(6, 0).Should().Be(new SKColor(0, 0, 255, 255));
+    }
+
+    [Fact]
+    public void RenderSource_InvalidLayerCopyReferences_ReportDiagnostics()
+    {
+        const string missingSource = """
+            layers = { duplicate = { copy = absent } }
+            output = { dimensions = { width = 4, height = 4 } }
+            """;
+
+        using var missingResult = new GfxCanvasCompositor().RenderSource(missingSource);
+
+        missingResult.Diagnostics.Should().ContainSingle(d => d.Code == "RND051");
+
+        const string cyclicSource = """
+            layers = {
+              first = { copy = second }
+              second = { copy = first }
+            }
+            output = { dimensions = { width = 4, height = 4 } }
+            """;
+
+        using var cyclicResult = new GfxCanvasCompositor().RenderSource(cyclicSource);
+
+        cyclicResult.Diagnostics.Should().ContainSingle(d => d.Code == "RND052");
+        cyclicResult.Diagnostics[0].Message.Should().Contain("first").And.Contain("second");
+    }
+
+    [Fact]
+    public void RenderSource_AppliesLayerShear()
+    {
+        const string source = """
+            layers = {
+              background = {
+                type = test_solid
+                color = rgb(0, 0, 0)
+              }
+              sheared = {
+                type = test_solid
+                color = rgb(255, 0, 0)
+                size = { width = 4, height = 4 }
+                anchor = { x = 0, y = 0 }
+                shear = { x = 1, y = 0 }
+                resample = nearest
+              }
+            }
+            output = { dimensions = { width = 8, height = 4 } }
+            """;
+
+        using var result = new GfxCanvasCompositor(LayerRendererRegistry.CreateDefault([
+            new TestSolidLayerRenderer()])).RenderSource(source);
+
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+        result.Bitmap!.GetPixel(1, 0).Should().Be(new SKColor(255, 0, 0, 255));
+        result.Bitmap.GetPixel(2, 1).Should().Be(new SKColor(255, 0, 0, 255));
+        result.Bitmap.GetPixel(3, 2).Should().Be(new SKColor(255, 0, 0, 255));
+        result.Bitmap.GetPixel(0, 0).Should().Be(new SKColor(0, 0, 0, 255));
+    }
+
+    [Fact]
+    public void RenderSource_InvalidLayerShear_ReportsDiagnostic()
+    {
+        const string source = """
+            layers = {
+              invalid = {
+                type = fill
+                color = rgb(255, 255, 255)
+                shear = 1
+              }
+            }
+            output = { dimensions = { width = 4, height = 4 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+
+        result.Diagnostics.Should().ContainSingle(d => d.Code == "RND036" && d.Message.Contains("shear"));
+    }
+
+    [Fact]
     public void RenderSource_UnknownLayerType_ReportsDiagnosticListingAvailableTypes()
     {
         const string source = """

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>GfxStudio.Editor</RootNamespace>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseAvalonia>true</UseAvalonia>
+    <AvaloniaThemes>Fluent</AvaloniaThemes>
+    <AssemblyName>gfx-studio-editor</AssemblyName>
+    <Version>0.1.0</Version>
+    <Authors>John Strand</Authors>
+    <Description>Editor and live preview tool for GfxStudio .gfx definitions.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/johnstrand/gfx-studio</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\GfxStudio.Core\GfxStudio.Core.csproj" />
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="SkiaSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\samples\*.gfx" Link="samples\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\samples\**\*.js" Link="samples\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

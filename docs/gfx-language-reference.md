@@ -241,6 +241,36 @@ Layers are declared in `layers = { ... }` in ascending draw order (first layer i
   - `fit`: `"fill"`, `"contain"`, `"cover"`, `"tile"`, or `"center"`
   - `resample`: `"linear"` or `"nearest"`
 
+### Layer copies and transforms
+
+Use `copy` to base a layer on another layer. All source properties are inherited; properties
+declared on the copy replace the inherited values. Copies can reference layers declared later
+and can be chained, but circular or missing references are errors.
+
+```gfx
+layers = {
+  tile = {
+    type = rect
+    size = { width = 32, height = 32 }
+    fill_color = rgb(40, 120, 220)
+  }
+  highlighted_tile = {
+    copy = tile
+    fill_color = rgb(250, 210, 80)
+    offset = { x = 36, y = 0 }
+    rotation = 12
+    shear = { x = 0.15, y = 0 }
+    flip_x = true
+  }
+}
+```
+
+All layers support `rotation` in degrees, `shear = { x, y }` (horizontal and vertical
+shear factors), and boolean `flip_x` / `flip_y` mirroring. `anchor` (or `pivot`) selects
+the transform origin: values where both coordinates are in `[0, 1]` are normalized to the
+layer size; other values are pixel coordinates. Transformed pixels outside the layer bitmap
+are clipped.
+
 ---
 
 ## 7. Blend Modes (`mix`)

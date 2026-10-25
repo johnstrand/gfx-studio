@@ -1,0 +1,184 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="GfxStudio.Editor.MainView"
+        Title="GfxStudio — .gfx Editor &amp; Preview"
+        MinWidth="900" MinHeight="560"
+        Width="1280" Height="800"
+        Background="#1E1E1E"
+        FontFamily="Segoe UI"
+        FontSize="13">
+
+    <Window.Resources>
+        <DataTemplate x:Key="DiagnosticRowTemplate">
+            <Border Margin="0,3,0,0" Padding="6,4,6,4" Background="Transparent"
+                    BorderThickness="0,0,0,0" IsHitTestVisible="True">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Margin="0,0,8,0" CornerRadius="2" Padding="4,0" Background="#4A2C2C">
+                        <TextBlock Text="{Binding Code}" FontWeight="Bold" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Grid.Column="1" Text="{Binding Message}" TextWrapping="Wrap" VerticalAlignment="Top"
+                               Foreground="#D8D8D8" MaxWidth="9999"/>
+                    <TextBlock Grid.Column="2" Text="{Binding Line}" Margin="6,0,0,0" FontFamily="Consolas"
+                               FontWeight="Normal" Foreground="#8A8A8A" VerticalAlignment="Top"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Toolbar -->
+        <Border Grid.Row="0" Margin="8,8,8,0" Background="#262626" Padding="8">
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="NewButton" Content="New" Margin="0,0,4,0"/>
+                <Button x:Name="OpenButton" Content="Open" Margin="0,0,4,0"/>
+                <Button x:Name="SaveButton" Content="Save" Margin="0,0,4,0"/>
+                <Button x:Name="SaveAsButton" Content="Save As" Margin="0,0,4,0"/>
+                <Separator x:Name="Separator1" Width="8" Margin="8,0"/>
+                <TextBlock Text="Sample:" Margin="0,0,6,0" Foreground="#9A9A9A" VerticalAlignment="Center"/>
+                <ComboBox x:Name="SampleComboBox" Width="190" VerticalAlignment="Center"/>
+                <Button x:Name="RunButton" Content="Run" Margin="8,0,4,0"/>
+                <CheckBox x:Name="RunOnChangeCheckBox" Content="Run on change"
+                          IsChecked="{Binding RunOnChange, Mode=TwoWay}" VerticalAlignment="Center" Margin="4,0,8,0"/>
+                <StackPanel Orientation="Horizontal" Margin="0,0,4,0">
+                    <TextBlock Text="Seed:" Margin="0,0,6,0" Foreground="#9A9A9A" VerticalAlignment="Center"/>
+                    <TextBox x:Name="SeedTextBox" Width="140" FontFamily="Consolas" FontSize="12"
+                             Background="#2B2B2B" Foreground="#E8E8E8" BorderBrush="#555" Padding="6,4"
+                             VerticalAlignment="Center"/>
+                </StackPanel>
+                <TextBlock x:Name="TitleText" Foreground="#8A8A8A" VerticalAlignment="Center" Margin="8,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Main content -->
+        <Grid Grid.Row="1" Margin="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="420"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: editor + diagnostics -->
+            <Border Grid.Column="0" Margin="10,6,0,6" Background="#232323" BorderBrush="#3A3A3A" BorderThickness="1">
+                <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="180"/>
+                </Grid.RowDefinitions>
+
+                <!-- Editor -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="48"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <ScrollViewer x:Name="GutterScrollViewer"
+                                  Grid.Column="0"
+                                  VerticalScrollBarVisibility="Hidden"
+                                  HorizontalScrollBarVisibility="Hidden"
+                                  IsScrollChainingEnabled="False"
+                                  Background="#2A2A2A"
+                                  >
+                        <StackPanel x:Name="GutterPanel" Orientation="Vertical" Margin="0,4,0,4">
+                            <!-- populated in code-behind -->
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <ScrollViewer x:Name="EditorScrollViewer"
+                                  Grid.Column="1"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  IsScrollChainingEnabled="True"
+                                  IsScrollInertiaEnabled="False"
+                                  Background="#262626"
+                                  >
+                        <Grid>
+                            <TextBox x:Name="EditorTextBox"
+                                     Text="{Binding Source, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     FontFamily="Consolas"
+                                     FontSize="12"
+                                     Background="Transparent"
+                                     Foreground="#E8E8E8"
+                                     CaretBrush="#E8E8E8"
+                                     Padding="6"
+                                     Margin="0"
+                                     AcceptsReturn="True"
+                                     AcceptsTab="True"
+                                     TextWrapping="NoWrap"
+                                     BorderThickness="0"/>
+                            <TextBlock x:Name="SyntaxHighlightText"
+                                       ZIndex="1"
+                                       FontFamily="Consolas"
+                                       FontSize="12"
+                                       Foreground="#E8E8E8"
+                                       Padding="6"
+                                       TextWrapping="NoWrap"
+                                       IsHitTestVisible="False"/>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- Diagnostics -->
+                <ListBox x:Name="DiagnosticsList"
+                         Grid.Row="1"
+                         Margin="0,8,0,0"
+                         ItemsSource="{Binding Diagnostics}"
+                         ItemTemplate="{StaticResource DiagnosticRowTemplate}"
+                         Background="Transparent"
+                          BorderThickness="0">
+                </ListBox>
+                </Grid>
+            </Border>
+
+            <!-- Right: preview -->
+            <Border Grid.Column="1" Margin="0,0,10,10" Background="#232323" BorderBrush="#3A3A3A" BorderThickness="1">
+                <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Frame navigation -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="4,4" Spacing="2">
+                    <Button x:Name="FirstButton" Content="|&lt;" Width="28" Padding="0" FontFamily="Consolas"/>
+                    <Button x:Name="PrevButton" Content="&lt;" Width="28" Padding="0" FontFamily="Consolas"/>
+                    <Button x:Name="NextButton" Content="&gt;" Width="28" Padding="0" FontFamily="Consolas"/>
+                    <Button x:Name="LastButton" Content="&gt;|" Width="28" Padding="0" FontFamily="Consolas"/>
+                    <Button x:Name="PlayButton" Content="Play" Margin="4,0,0,0" IsVisible="True"/>
+                    <TextBlock x:Name="FrameIndicator" Text="Frame ?" Foreground="#9A9A9A" VerticalAlignment="Center" Margin="8,0,0,0"
+                               FontWeight="Bold" FontFamily="Consolas"/>
+                    <Separator Width="16"/>
+                    <TextBlock Text="Preview" Foreground="#8A8A8A" VerticalAlignment="Center" FontFamily="Segoe UI"/>
+                </StackPanel>
+
+                <!-- Checkerboard + preview image -->
+                <Border Grid.Row="1" Margin="4,6,4,4" Background="#2B2B2B" BorderBrush="#444" BorderThickness="1" CornerRadius="6">
+                    <Border CornerRadius="6" Margin="4" Background="#1E1E1E" Padding="16">
+                        <Grid>
+                            <Image x:Name="CheckerboardImage" Stretch="Fill" Opacity="0.8"/>
+                            <Viewbox Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Image x:Name="PreviewImage"/>
+                            </Viewbox>
+                        </Grid>
+                    </Border>
+                </Border>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Status bar -->
+        <TextBlock x:Name="StatusBar" Grid.Row="2" Text="{Binding StatusText}"
+                    Background="#2B2B2B" Padding="10,6" Foreground="#B8B8B8"
+                   FontFamily="Consolas" FontSize="12" VerticalAlignment="Center"/>
+    </Grid>
+</Window>
