@@ -19,8 +19,8 @@ A programmable, deterministic 2D generative graphics engine and domain-specific 
   3. `image_map` — Packed 2D sprite sheets with structured JSON atlas metadata.
   4. `animation_frames` — Frame sequences for game sprite animations.
   5. `animation_gif` — Optimized animated GIFs with Floyd-Steinberg dithering and seamless 4D looping noise.
-- **Rich Procedural Layer Engine**: Multi-octave Perlin Fractal Brownian Motion (fBm), Worley (cellular) noise, domain warping, gradients, geometric shapes, patterns, typography, and image loading.
-- **Compositing & Effects**: 18 blend modes (Multiply, Screen, Overlay, etc.), Gaussian blur, drop shadows, outlines, posterization, pixelation, and color adjustments.
+- **Rich Procedural Layer Engine**: Multi-octave Perlin Fractal Brownian Motion (fBm), Worley (cellular) noise, Gray-Scott reaction-diffusion (`coral`, `spots`, `fingerprints`, `mitosis`), composable Signed Distance Fields (`sdf`) with smooth CSG operations, organic textures (`wood`, `marble`, `caustics`, `flow_field`, `starfield`), geometric patterns (`bricks`, `truchet`, `tiling`/`hex_grid`, `waves`, `spiral`, `checkerboard`, `stripes`, `grid`, `dots`), gradients, vector shapes, typography, and image loading.
+- **Compositing, Spatial Warps & Stylization Filters**: 18 blend modes, fBm & cross-layer displacement warping (`warp`/`displace`, `twirl`, `ripple`, `spherize`, `kaleidoscope`), surface relief (`emboss`, `bevel`, `normal_map`), print & retro dithering (`halftone`, `dither`, `stipple`, `edge_detect`), and post-processing (`bloom`, `vignette`, `chromatic_aberration`, `crt`, `oil_paint`, `gaussian_blur`, `drop_shadow`, `outline`, `posterize`, `pixelate`, `color_adjust`).
 - **Embedded JavaScript Engine**: Seamless integration with modern JavaScript (ES modules) via Jint for complex procedural logic.
 
 ---
@@ -102,6 +102,13 @@ Procedural playing card deck generated using exported functions from `samples/sc
 
 ```bash
 gfx render samples/scripted_cards.gfx --output-dir ./output_cards
+```
+
+### 7. Procedural Generators, SDF & Stylization Showcase (`samples/procedural_showcase.gfx`)
+Combines `starfield`, `reaction_diffusion`, `caustics`, composable `sdf` CSG primitives with `bevel`, `bloom`, and `vignette`:
+
+```bash
+gfx render samples/procedural_showcase.gfx --output-dir ./output_showcase
 ```
 
 ---

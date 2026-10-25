@@ -531,4 +531,20 @@ internal static class EffectPropertyHelpers
         context.AddDiagnostic("FX007", $"Property '{propName}' on layer '{context.LayerId}' must be '{{ x, y }}'.");
         return defaultValue;
     }
+
+    public static string ResolveString(EffectContext context, string primaryName, string? aliasName, string defaultValue)
+    {
+        if (context.Properties.TryGetProperty(primaryName, out var val)
+            || (aliasName is not null && context.Properties.TryGetProperty(aliasName, out val)))
+        {
+            return val switch
+            {
+                GfxSymbol s => s.Identifier,
+                GfxString str => str.Value,
+                _ => defaultValue
+            };
+        }
+
+        return defaultValue;
+    }
 }

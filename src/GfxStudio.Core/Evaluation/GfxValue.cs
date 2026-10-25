@@ -28,6 +28,19 @@ public abstract record GfxValue
         };
     }
 
+    /// <summary>Attempts to coerce this value into a <see cref="double"/> value.</summary>
+    public bool TryCoerceToDouble(out double number)
+    {
+        if (this is GfxNumber num)
+        {
+            number = num.Value;
+            return true;
+        }
+
+        number = 0.0;
+        return false;
+    }
+
     /// <summary>Attempts to coerce this value into a <see cref="Dimensions"/> value.</summary>
     public bool TryCoerceToDimensions(out Dimensions dimensions)
     {

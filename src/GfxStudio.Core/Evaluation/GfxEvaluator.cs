@@ -499,8 +499,8 @@ public sealed class GfxEvaluator
             return new GfxNumber(_context.Frame.Progress);
         }
 
-        // 5. Registered functions / JS function references
-        if (_context.TryGetFunction(name, out var callable))
+        // 5. Registered user/JS function references (built-in standard functions require explicit `(args)` call syntax)
+        if (_context.TryGetFunction(name, out var callable) && !Functions.StandardFunctions.IsBuiltIn(callable))
         {
             return new GfxFunctionRef(callable);
         }

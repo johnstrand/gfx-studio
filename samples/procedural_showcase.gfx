@@ -1,0 +1,70 @@
+// Procedural Generators, SDF CSG, Reaction-Diffusion & Stylization Showcase
+seed = 2026
+
+output = {
+  mode = single
+  dimensions = { width = 256, height = 256 }
+  filename = "procedural_showcase.png"
+}
+
+layers = {
+  // 1. Deep space starfield + nebula backdrop
+  cosmos = {
+    type = starfield
+    density = 0.004
+    nebula = 0.45
+    glow = 2.5
+  }
+
+  // 2. Gray-Scott reaction-diffusion coral pattern blended in screen mode
+  turing_coral = {
+    type = reaction_diffusion
+    preset = coral
+    iterations = 90
+    color = color_ramp(rgba(0, 0, 0, 0), rgba(14, 165, 233, 95), rgba(186, 230, 253, 160))
+    mix = screen
+    opacity = 0.65
+  }
+
+  // 3. Underwater caustics shimmer warped by fBm
+  shimmer = {
+    type = caustics
+    scale = 4.5
+    sharpness = 2.8
+    color = color_ramp(rgba(0, 0, 0, 0), rgba(56, 189, 248, 80), rgba(240, 249, 255, 190))
+    warp = { strength = 6, scale = 3.0 }
+    mix = add
+    opacity = 0.45
+  }
+
+  // 4. Signed Distance Field (SDF) emblem with smooth CSG union, subtraction, and outer glow
+  emblem = {
+    type = sdf
+    fill_color = rgb(245, 158, 11)
+    stroke_color = rgb(254, 243, 199)
+    stroke_width = 2.5
+    glow = 14
+    glow_color = rgba(251, 191, 36, 180)
+    shapes = [
+      { shape = star, center = { x = 0.5, y = 0.5 }, radius = 0.28, points = 6, inner_ratio = 0.52, op = union },
+      { shape = ring, center = { x = 0.5, y = 0.5 }, radius = 0.30, thickness = 0.03, op = smooth_union, smoothness = 0.03 },
+      { shape = circle, center = { x = 0.5, y = 0.5 }, radius = 0.10, op = smooth_subtract, smoothness = 0.02 }
+    ]
+    bevel = { depth = 4, angle = 135, intensity = 0.55 }
+  }
+
+  // 5. Subtle bloom & vignette post-processing pass
+  post_bloom = {
+    type = bloom
+    threshold = 0.68
+    radius = 6
+    intensity = 0.55
+  }
+
+  post_vignette = {
+    type = vignette
+    strength = 0.65
+    radius = 0.78
+    softness = 0.45
+  }
+}

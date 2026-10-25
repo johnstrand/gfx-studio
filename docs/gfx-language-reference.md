@@ -186,11 +186,27 @@ Layers are declared in `layers = { ... }` in ascending draw order (first layer i
   - `jitter`: Cell point displacement ($0.0..1.0$)
 - **`perlin`** / **`simplex`**: Low-level 2D/3D coherent noise generators.
 
-### Procedural Patterns
-- **`checkerboard`**: Alternating checker grid (`color1`, `color2`, `cell_size`).
-- **`stripes`**: Angled procedural stripes (`color1`, `color2`, `width`, `angle`).
+### Procedural Patterns & Tessellations
+- **`checkerboard`**: Alternating checker grid (`color_a`, `color_b`, `size`).
+- **`stripes`**: Angled procedural stripes (`color_a`, `color_b`, `width`, `angle`).
 - **`grid`**: Coordinate grid lines (`color`, `background`, `cell_size`, `line_width`).
 - **`dots`**: Dot lattice pattern (`color`, `background`, `radius`, `spacing`).
+- **`bricks`**: Masonry wall generator (`bond = running | stack | herringbone`, `brick_width`, `brick_height`, `mortar`, `bevel`, `variation`, `color`, `mortar_color`).
+- **`truchet`**: Deterministic Truchet tiles (`style = arcs | diagonal | triangles`, `cell_size`, `thickness`, `color_a`, `color_b`).
+- **`tiling`** / **`hex_grid`** / **`chevron`**: Geometric tessellations (`style = hex | triangle | isometric | chevron`, `cell_size`, `line_width`, `variation`, `color`, `line_color`).
+- **`waves`**: 2D wave and interference generator (`style = sine | radial | interference | plasma | square | sawtooth | triangle`, `frequency`, `angle`, `phase`, `color`).
+- **`spiral`**: Archimedean, logarithmic, and vortex spirals (`style = archimedean | logarithmic | vortex`, `arms`, `tightness`, `phase`, `center`, `color`).
+
+### Organic & Natural Texture Generators
+- **`wood`**: Concentric wood grain rings with radial fBm turbulence and fibrous noise (`scale`, `rings`, `turbulence`, `fiber`, `color`).
+- **`marble`**: Sinusoidal marble veins perturbed by multi-octave fBm (`scale`, `veins`, `turbulence`, `sharpness`, `angle`, `color`).
+- **`caustics`**: Dual-layer warped Worley crease network simulating refracted underwater light (`scale`, `sharpness`, `jitter`, `phase`, `color`).
+- **`flow_field`** / **`curl_noise`**: Divergence-free 2D curl-advected flow lines (`scale`, `octaves`, `steps`, `step_size`, `frequency`, `color`).
+- **`starfield`**: Multi-depth procedural stars with optional diffraction spikes and fBm nebula backdrop (`density`, `nebula`, `spikes`, `glow`, `color`).
+
+### Reaction-Diffusion & Signed Distance Fields (SDF)
+- **`reaction_diffusion`** / **`turing`**: Deterministic 2D Gray-Scott reaction-diffusion solver (`preset = coral | spots | fingerprints | mitosis | worms | solitons`, `iterations`, `feed`, `kill`, `da`, `db`, `seed_mode = center | random_patches | ring | noise`, `color`).
+- **`sdf`**: Composable Signed Distance Field renderer supporting single shapes or `shapes = [ ... ]` CSG trees (`shape = circle | box | rounded_box | ring | segment | polygon | star | cross | vesica`, `op = union | smooth_union | subtract | smooth_subtract | intersect | smooth_intersect | xor`, `smoothness`, `mode = shape | isolines | distance`, `fill_color`, `stroke_color`, `stroke_width`, `glow`, `glow_color`).
 
 ### Vector Shapes
 - **`rect`**: Rectangle or rounded rectangle (`fill_color`, `stroke_color`, `stroke_width`, `corner_radius`, `rotation`).
@@ -264,6 +280,26 @@ Effects can be attached directly to any layer (e.g. `drop_shadow = { ... }`) or 
   ```gfx
   drop_shadow = { offset = { x = 2, y = 3 }, blur = 3, color = rgba(0, 0, 0, 180) }
   ```
+
+### Spatial Distortion & Displacement Effects
+- **`warp`** / **`displace`**: Procedural fBm domain warp or cross-layer displacement map (`map = layer_id`, `strength`, `scale`, `octaves`, `wrap`).
+- **`twirl`** / **`swirl`**: Radial vortex twist (`angle`, `radius`, `center`).
+- **`ripple`**: Concentric radial pond ripples or directional sine wave distortion (`amplitude`, `wavelength`, `phase`, `mode = radial | directional`).
+- **`spherize`** / **`pinch`**: Fisheye lens bulge (`amount > 0`) or pinch (`amount < 0`, `radius`, `center`).
+- **`kaleidoscope`**: Polar $N$-fold mirror symmetry reflection (`segments`, `angle`, `center`).
+
+### Surface, Print & Post-Processing Filters
+- **`emboss`**: Directional relief bump shader (`angle`, `elevation`, `strength`, `blend_original`).
+- **`bevel`**: Inner edge relief lighting from alpha/luminance contours (`depth`, `angle`, `soften`, `intensity`, `highlight_color`, `shadow_color`).
+- **`normal_map`**: Sobel height-to-tangent-space RGB normal map generator (`strength`, `invert_x`, `invert_y`).
+- **`halftone`**: Rotated comic/newsprint dot screen (`dot_size`, `angle`, `mode = mono | cmyk`, `color`, `background`).
+- **`dither`** / **`stipple`**: Retro quantization & dithering (`style = bayer | floyd_steinberg | atkinson | stipple`, `levels`, `scale`, `color_a`, `color_b`).
+- **`edge_detect`** / **`sobel`**: Sobel gradient magnitude contour extractor (`threshold`, `mode = grayscale | neon | ink`, `color`, `background`).
+- **`vignette`**: Smooth radial lens falloff (`strength`, `radius`, `softness`, `color`).
+- **`bloom`** / **`glow`**: Bright-pass highlight extraction with Gaussian halo (`threshold`, `radius`, `intensity`).
+- **`chromatic_aberration`**: RGB channel spatial dispersion (`offset`, `angle`, `radial`).
+- **`crt`** / **`scanlines`**: Retro monitor scanlines and barrel curvature (`spacing`, `opacity`, `curvature`).
+- **`oil_paint`** / **`kuwahara`**: Edge-preserving painterly Kuwahara filter (`radius`).
 
 ---
 

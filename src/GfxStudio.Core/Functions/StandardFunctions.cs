@@ -6,6 +6,8 @@ namespace GfxStudio.Core.Functions;
 
 internal static class StandardFunctions
 {
+    public static bool IsBuiltIn(IGfxCallable callable) => callable is BuiltInFunction;
+
     public static void RegisterAll(GfxFunctionRegistry registry)
     {
         registry.Register(Fixed("rgb", 3, Rgb));

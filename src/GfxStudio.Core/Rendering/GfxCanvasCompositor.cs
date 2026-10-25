@@ -262,6 +262,42 @@ public sealed class GfxCanvasCompositor
         context.Random = layerRandom;
         context.FrameRandom = layerFrameRandom;
 
+        SKBitmap? ResolveOtherLayerBitmap(string refLayerId)
+        {
+            if (string.IsNullOrWhiteSpace(refLayerId) || string.Equals(refLayerId, layerId, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            if (renderedLayers.TryGetValue(refLayerId, out var existingEntry))
+            {
+                return existingEntry.Bitmap;
+            }
+
+            if (!allLayersObject.Properties.TryGetValue(refLayerId, out var refLayerVal)
+                || refLayerVal is not GfxObject refLayerProps)
+            {
+                return null;
+            }
+
+            return RenderSingleLayerWithTransforms(
+                refLayerId,
+                refLayerProps,
+                allLayersObject,
+                currentCanvas,
+                canvasDimensions,
+                context,
+                effectiveSeedProvider,
+                layerSpans,
+                defaultSpan,
+                diagnostics,
+                renderedLayers,
+                out _,
+                out _,
+                out _,
+                out _);
+        }
+
         SKBitmap? rawBitmap;
         try
         {
@@ -269,7 +305,7 @@ public sealed class GfxCanvasCompositor
             {
                 isAdjustmentLayer = true;
                 rawBitmap = ExtractCanvasRegion(currentCanvas, offset, layerSize);
-                var effectContext = new EffectContext(layerId, layerProps, layerSpan, diagnostics);
+                var effectContext = new EffectContext(layerId, layerProps, layerSpan, diagnostics, layerRandom, ResolveOtherLayerBitmap);
                 adjustmentRenderer.Effect.Apply(rawBitmap, effectContext);
             }
             else
@@ -300,7 +336,7 @@ public sealed class GfxCanvasCompositor
 
         if (!isAdjustmentLayer)
         {
-            ApplyInlineLayerEffects(rawBitmap, layerProps, layerId, layerSpan, diagnostics);
+            ApplyInlineLayerEffects(rawBitmap, layerProps, layerId, layerSpan, diagnostics, layerRandom, ResolveOtherLayerBitmap);
         }
 
         var transformed = ApplyLayerTransformIfNeeded(rawBitmap, layerProps, layerType, layerId, layerSpan, diagnostics);
@@ -329,84 +365,71 @@ public sealed class GfxCanvasCompositor
         return transformed;
     }
 
+    private static readonly (string PropName, string EffectName, string? ScalarPropName)[] InlineEffectBindings =
+    [
+        ("outline", "outline", "width"),
+        ("drop_shadow", "drop_shadow", null),
+        ("shadow", "drop_shadow", null),
+        ("blur", "gaussian_blur", "radius"),
+        ("gaussian_blur", "gaussian_blur", "radius"),
+        ("box_blur", "gaussian_blur", "radius"),
+        ("threshold", "threshold", "level"),
+        ("posterize", "posterize", "levels"),
+        ("pixelate", "pixelate", "block_size"),
+        ("color_adjust", "color_adjust", null),
+        ("warp", "warp", "strength"),
+        ("displace", "displace", "strength"),
+        ("twirl", "twirl", "angle"),
+        ("swirl", "swirl", "angle"),
+        ("ripple", "ripple", "amplitude"),
+        ("spherize", "spherize", "amount"),
+        ("pinch", "pinch", "amount"),
+        ("kaleidoscope", "kaleidoscope", "segments"),
+        ("emboss", "emboss", "strength"),
+        ("bevel", "bevel", "depth"),
+        ("normal_map", "normal_map", "strength"),
+        ("halftone", "halftone", "dot_size"),
+        ("dither", "dither", "levels"),
+        ("stipple", "stipple", "levels"),
+        ("edge_detect", "edge_detect", "threshold"),
+        ("sobel", "sobel", "threshold"),
+        ("vignette", "vignette", "strength"),
+        ("bloom", "bloom", "intensity"),
+        ("glow", "glow", "intensity"),
+        ("chromatic_aberration", "chromatic_aberration", "offset"),
+        ("crt", "crt", "scanline_opacity"),
+        ("scanlines", "scanlines", "scanline_opacity"),
+        ("oil_paint", "oil_paint", "radius"),
+        ("kuwahara", "kuwahara", "radius")
+    ];
+
     private void ApplyInlineLayerEffects(
         SKBitmap bitmap,
         GfxObject layerProps,
         string layerId,
         SourceSpan layerSpan,
-        List<GfxDiagnostic> diagnostics)
+        List<GfxDiagnostic> diagnostics,
+        IGfxRandom layerRandom,
+        Func<string, SKBitmap?> resolveLayerBitmap)
     {
-        // 1. outline = { width = ..., color = ... }
-        if (layerProps.TryGetProperty("outline", out var outlineVal) && outlineVal is GfxObject outlineObj)
+        foreach (var (propName, effectName, scalarPropName) in InlineEffectBindings)
         {
-            if (_effectRegistry.TryGetEffect("outline", out var outlineEffect))
+            if (!layerProps.TryGetProperty(propName, out var propVal))
             {
-                outlineEffect.Apply(bitmap, new EffectContext(layerId, outlineObj, layerSpan, diagnostics));
+                continue;
+            }
+
+            var effectProps = scalarPropName is not null
+                ? CoerceEffectProps(propVal, scalarPropName)
+                : propVal as GfxObject;
+
+            if (effectProps is not null && _effectRegistry.TryGetEffect(effectName, out var inlineEffect))
+            {
+                inlineEffect.Apply(bitmap, new EffectContext(layerId, effectProps, layerSpan, diagnostics, layerRandom, resolveLayerBitmap));
             }
         }
 
-        // 2. drop_shadow = { offset = ..., blur = ..., color = ... }
-        if ((layerProps.TryGetProperty("drop_shadow", out var shadowVal) || layerProps.TryGetProperty("shadow", out shadowVal))
-            && shadowVal is GfxObject shadowObj)
-        {
-            if (_effectRegistry.TryGetEffect("drop_shadow", out var shadowEffect))
-            {
-                shadowEffect.Apply(bitmap, new EffectContext(layerId, shadowObj, layerSpan, diagnostics));
-            }
-        }
-
-        // 3. blur / gaussian_blur / box_blur
-        if (layerProps.TryGetProperty("blur", out var blurVal)
-            || layerProps.TryGetProperty("gaussian_blur", out blurVal)
-            || layerProps.TryGetProperty("box_blur", out blurVal))
-        {
-            var blurProps = CoerceEffectProps(blurVal, "radius");
-            if (blurProps is not null && _effectRegistry.TryGetEffect("gaussian_blur", out var blurEffect))
-            {
-                blurEffect.Apply(bitmap, new EffectContext(layerId, blurProps, layerSpan, diagnostics));
-            }
-        }
-
-        // 4. threshold
-        if (layerProps.TryGetProperty("threshold", out var threshVal))
-        {
-            var threshProps = CoerceEffectProps(threshVal, "level");
-            if (threshProps is not null && _effectRegistry.TryGetEffect("threshold", out var threshEffect))
-            {
-                threshEffect.Apply(bitmap, new EffectContext(layerId, threshProps, layerSpan, diagnostics));
-            }
-        }
-
-        // 5. posterize
-        if (layerProps.TryGetProperty("posterize", out var postVal))
-        {
-            var postProps = CoerceEffectProps(postVal, "levels");
-            if (postProps is not null && _effectRegistry.TryGetEffect("posterize", out var postEffect))
-            {
-                postEffect.Apply(bitmap, new EffectContext(layerId, postProps, layerSpan, diagnostics));
-            }
-        }
-
-        // 6. pixelate
-        if (layerProps.TryGetProperty("pixelate", out var pixVal))
-        {
-            var pixProps = CoerceEffectProps(pixVal, "block_size");
-            if (pixProps is not null && _effectRegistry.TryGetEffect("pixelate", out var pixEffect))
-            {
-                pixEffect.Apply(bitmap, new EffectContext(layerId, pixProps, layerSpan, diagnostics));
-            }
-        }
-
-        // 7. color_adjust
-        if (layerProps.TryGetProperty("color_adjust", out var caVal) && caVal is GfxObject caObj)
-        {
-            if (_effectRegistry.TryGetEffect("color_adjust", out var caEffect))
-            {
-                caEffect.Apply(bitmap, new EffectContext(layerId, caObj, layerSpan, diagnostics));
-            }
-        }
-
-        // 8. effects = [ { type = ..., ... }, ... ]
+        // effects = [ { type = ..., ... }, ... ]
         if (layerProps.TryGetProperty("effects", out var effectsVal) && effectsVal is GfxArray effectsArr)
         {
             foreach (var item in effectsArr.Items)
@@ -430,7 +453,7 @@ public sealed class GfxCanvasCompositor
                     continue;
                 }
 
-                effect.Apply(bitmap, new EffectContext(layerId, fxObj, layerSpan, diagnostics));
+                effect.Apply(bitmap, new EffectContext(layerId, fxObj, layerSpan, diagnostics, layerRandom, resolveLayerBitmap));
             }
         }
     }
@@ -598,7 +621,14 @@ public sealed class GfxCanvasCompositor
             || layerType.Equals("perlin", StringComparison.OrdinalIgnoreCase)
             || layerType.Equals("simplex", StringComparison.OrdinalIgnoreCase)
             || layerType.Equals("worley", StringComparison.OrdinalIgnoreCase)
-            || layerType.Equals("voronoi", StringComparison.OrdinalIgnoreCase);
+            || layerType.Equals("voronoi", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("wood", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("marble", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("caustics", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("flow_field", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("curl_noise", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("warp", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("displace", StringComparison.OrdinalIgnoreCase);
 
         if (!layerProps.TryGetProperty("transform_scale", out var scaleVal))
         {
@@ -906,7 +936,14 @@ public sealed class GfxCanvasCompositor
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics)
     {
-        if (layerProps.TryGetProperty("offset", out var offsetVal))
+        var layerType = layerProps.TryGetProperty("type", out var tv)
+            ? tv switch { GfxSymbol s => s.Identifier, GfxString str => str.Value, _ => string.Empty }
+            : string.Empty;
+        var usesOffsetAsEffectParam = layerType.Equals("chromatic_aberration", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("drop_shadow", StringComparison.OrdinalIgnoreCase)
+            || layerType.Equals("shadow", StringComparison.OrdinalIgnoreCase);
+
+        if (!usesOffsetAsEffectParam && layerProps.TryGetProperty("offset", out var offsetVal))
         {
             if (offsetVal.TryCoerceToPoint2D(out var pt))
             {

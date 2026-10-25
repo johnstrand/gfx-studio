@@ -1,5 +1,6 @@
 using GfxStudio.Core.Diagnostics;
 using GfxStudio.Core.Evaluation;
+using GfxStudio.Core.Randomness;
 using SkiaSharp;
 
 namespace GfxStudio.Core.Rendering.Effects;
@@ -13,7 +14,9 @@ public sealed class EffectContext
         string layerId,
         GfxObject properties,
         SourceSpan span = default,
-        List<GfxDiagnostic>? diagnostics = null)
+        List<GfxDiagnostic>? diagnostics = null,
+        IGfxRandom? random = null,
+        Func<string, SKBitmap?>? resolveLayerBitmap = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(layerId);
         ArgumentNullException.ThrowIfNull(properties);
@@ -24,6 +27,8 @@ public sealed class EffectContext
             ? new SourceSpan("<memory>", new SourceLocation(1, 1, 0), new SourceLocation(1, 1, 0))
             : span;
         _diagnostics = diagnostics ?? [];
+        Random = random ?? new GfxRandom(0);
+        ResolveLayerBitmap = resolveLayerBitmap;
     }
 
     public string LayerId { get; }
@@ -31,6 +36,10 @@ public sealed class EffectContext
     public GfxObject Properties { get; }
 
     public SourceSpan Span { get; }
+
+    public IGfxRandom Random { get; }
+
+    public Func<string, SKBitmap?>? ResolveLayerBitmap { get; }
 
     public IReadOnlyList<GfxDiagnostic> Diagnostics => _diagnostics;
 
@@ -69,6 +78,34 @@ public sealed class LayerEffectRegistry
         registry.Register(new OutlineEffect());
         registry.Register(new DropShadowEffect("drop_shadow"));
         registry.Register(new DropShadowEffect("shadow"));
+
+        // Spatial distortion & displacement effects (#24)
+        registry.Register(new WarpEffect("warp"));
+        registry.Register(new WarpEffect("displace"));
+        registry.Register(new TwirlEffect("twirl"));
+        registry.Register(new TwirlEffect("swirl"));
+        registry.Register(new RippleEffect());
+        registry.Register(new SpherizeEffect("spherize", 0.6));
+        registry.Register(new SpherizeEffect("pinch", -0.6));
+        registry.Register(new KaleidoscopeEffect());
+
+        // Surface, print & post-processing filters (#25)
+        registry.Register(new EmbossEffect());
+        registry.Register(new BevelEffect());
+        registry.Register(new NormalMapEffect());
+        registry.Register(new HalftoneEffect());
+        registry.Register(new DitherStippleEffect("dither", "bayer"));
+        registry.Register(new DitherStippleEffect("stipple", "stipple"));
+        registry.Register(new EdgeDetectEffect("edge_detect"));
+        registry.Register(new EdgeDetectEffect("sobel"));
+        registry.Register(new VignetteEffect());
+        registry.Register(new BloomEffect("bloom"));
+        registry.Register(new BloomEffect("glow"));
+        registry.Register(new ChromaticAberrationEffect());
+        registry.Register(new CrtScanlinesEffect("crt"));
+        registry.Register(new CrtScanlinesEffect("scanlines"));
+        registry.Register(new KuwaharaEffect("oil_paint"));
+        registry.Register(new KuwaharaEffect("kuwahara"));
         return registry;
     }
 
@@ -104,7 +141,7 @@ public sealed class EffectAdjustmentLayerRenderer : ILayerRenderer
     {
         ArgumentNullException.ThrowIfNull(context);
         var bitmap = context.CreateLayerBitmap();
-        var effectContext = new EffectContext(context.LayerId, context.LayerProperties, context.LayerSpan);
+        var effectContext = new EffectContext(context.LayerId, context.LayerProperties, context.LayerSpan, random: context.Random);
         _effect.Apply(bitmap, effectContext);
         foreach (var diag in effectContext.Diagnostics)
         {

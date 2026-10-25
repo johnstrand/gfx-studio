@@ -30,6 +30,9 @@ public sealed class FractalBrownianMotion
 
     public double Lacunarity { get; }
 
+    /// <summary>Samples 2D fBm at <c>(x, y)</c> and normalizes the result to <c>[0.0, 1.0]</c>.</summary>
+    public float Sample2D(double x, double y) => Sample3D(x, y, 0.0);
+
     /// <summary>Samples 3D fBm at <c>(x, y, z)</c> and normalizes the result to <c>[0.0, 1.0]</c>.</summary>
     public float Sample3D(double x, double y, double z = 0.0)
     {
