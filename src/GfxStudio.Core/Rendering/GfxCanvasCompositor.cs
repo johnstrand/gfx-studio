@@ -4,6 +4,7 @@ using GfxStudio.Core.Parsing;
 using GfxStudio.Core.Parsing.Ast;
 using GfxStudio.Core.Primitives;
 using GfxStudio.Core.Randomness;
+using GfxStudio.Core.Rendering.Effects;
 using SkiaSharp;
 
 namespace GfxStudio.Core.Rendering;
@@ -28,10 +29,12 @@ public sealed record CanvasRenderResult(
 public sealed class GfxCanvasCompositor
 {
     private readonly LayerRendererRegistry _registry;
+    private readonly LayerEffectRegistry _effectRegistry;
 
-    public GfxCanvasCompositor(LayerRendererRegistry? registry = null)
+    public GfxCanvasCompositor(LayerRendererRegistry? registry = null, LayerEffectRegistry? effectRegistry = null)
     {
         _registry = registry ?? LayerRendererRegistry.CreateDefault();
+        _effectRegistry = effectRegistry ?? LayerEffectRegistry.CreateDefault();
     }
 
     public LayerRendererRegistry Registry => _registry;
@@ -164,6 +167,7 @@ public sealed class GfxCanvasCompositor
                     layerId,
                     layerProps,
                     layersObject,
+                    canvas,
                     canvasDimensions,
                     context,
                     effectiveSeedProvider,
@@ -173,11 +177,19 @@ public sealed class GfxCanvasCompositor
                     renderedLayers,
                     out var offset,
                     out var blendMode,
-                    out var opacity);
+                    out var opacity,
+                    out var isAdjustmentLayer);
 
                 if (layerBitmap is not null)
                 {
-                    PixelBlender.Composite(canvas, layerBitmap, offset, blendMode, opacity);
+                    if (isAdjustmentLayer && blendMode == BlendMode.Normal && opacity >= 0.9999f)
+                    {
+                        WriteRegionInPlace(canvas, layerBitmap, offset);
+                    }
+                    else
+                    {
+                        PixelBlender.Composite(canvas, layerBitmap, offset, blendMode, opacity);
+                    }
                 }
             }
         }
@@ -196,6 +208,7 @@ public sealed class GfxCanvasCompositor
         string layerId,
         GfxObject layerProps,
         GfxObject allLayersObject,
+        SKBitmap currentCanvas,
         Dimensions canvasDimensions,
         EvaluationContext context,
         DeterministicSeedProvider effectiveSeedProvider,
@@ -205,8 +218,10 @@ public sealed class GfxCanvasCompositor
         Dictionary<string, (SKBitmap Bitmap, Point2D Offset)> renderedLayers,
         out Point2D offset,
         out BlendMode blendMode,
-        out float opacity)
+        out float opacity,
+        out bool isAdjustmentLayer)
     {
+        isAdjustmentLayer = false;
         var layerSpan = layerSpans.GetValueOrDefault(layerId, defaultSpan);
         var layerSize = ExtractLayerDimensions(layerProps, canvasDimensions, layerId, layerSpan, diagnostics);
         offset = ExtractLayerOffset(layerProps, layerId, layerSpan, diagnostics);
@@ -248,17 +263,27 @@ public sealed class GfxCanvasCompositor
         SKBitmap? rawBitmap;
         try
         {
-            var renderContext = new LayerRenderContext(
-                layerId,
-                layerProps,
-                canvasDimensions,
-                layerSize,
-                layerRandom,
-                context,
-                layerSpan,
-                diagnostics);
+            if (renderer is EffectAdjustmentLayerRenderer adjustmentRenderer)
+            {
+                isAdjustmentLayer = true;
+                rawBitmap = ExtractCanvasRegion(currentCanvas, offset, layerSize);
+                var effectContext = new EffectContext(layerId, layerProps, layerSpan, diagnostics);
+                adjustmentRenderer.Effect.Apply(rawBitmap, effectContext);
+            }
+            else
+            {
+                var renderContext = new LayerRenderContext(
+                    layerId,
+                    layerProps,
+                    canvasDimensions,
+                    layerSize,
+                    layerRandom,
+                    context,
+                    layerSpan,
+                    diagnostics);
 
-            rawBitmap = renderer.RenderLayer(renderContext);
+                rawBitmap = renderer.RenderLayer(renderContext);
+            }
         }
         finally
         {
@@ -269,6 +294,11 @@ public sealed class GfxCanvasCompositor
         if (rawBitmap is null)
         {
             return null;
+        }
+
+        if (!isAdjustmentLayer)
+        {
+            ApplyInlineLayerEffects(rawBitmap, layerProps, layerId, layerSpan, diagnostics);
         }
 
         var transformed = ApplyLayerTransformIfNeeded(rawBitmap, layerProps, layerType, layerId, layerSpan, diagnostics);
@@ -282,6 +312,7 @@ public sealed class GfxCanvasCompositor
             offset,
             layerProps,
             allLayersObject,
+            currentCanvas,
             canvasDimensions,
             context,
             effectiveSeedProvider,
@@ -294,6 +325,177 @@ public sealed class GfxCanvasCompositor
 
         renderedLayers[layerId] = (transformed, offset);
         return transformed;
+    }
+
+    private void ApplyInlineLayerEffects(
+        SKBitmap bitmap,
+        GfxObject layerProps,
+        string layerId,
+        SourceSpan layerSpan,
+        List<GfxDiagnostic> diagnostics)
+    {
+        // 1. outline = { width = ..., color = ... }
+        if (layerProps.TryGetProperty("outline", out var outlineVal) && outlineVal is GfxObject outlineObj)
+        {
+            if (_effectRegistry.TryGetEffect("outline", out var outlineEffect))
+            {
+                outlineEffect.Apply(bitmap, new EffectContext(layerId, outlineObj, layerSpan, diagnostics));
+            }
+        }
+
+        // 2. drop_shadow = { offset = ..., blur = ..., color = ... }
+        if ((layerProps.TryGetProperty("drop_shadow", out var shadowVal) || layerProps.TryGetProperty("shadow", out shadowVal))
+            && shadowVal is GfxObject shadowObj)
+        {
+            if (_effectRegistry.TryGetEffect("drop_shadow", out var shadowEffect))
+            {
+                shadowEffect.Apply(bitmap, new EffectContext(layerId, shadowObj, layerSpan, diagnostics));
+            }
+        }
+
+        // 3. blur / gaussian_blur / box_blur
+        if (layerProps.TryGetProperty("blur", out var blurVal)
+            || layerProps.TryGetProperty("gaussian_blur", out blurVal)
+            || layerProps.TryGetProperty("box_blur", out blurVal))
+        {
+            var blurProps = CoerceEffectProps(blurVal, "radius");
+            if (blurProps is not null && _effectRegistry.TryGetEffect("gaussian_blur", out var blurEffect))
+            {
+                blurEffect.Apply(bitmap, new EffectContext(layerId, blurProps, layerSpan, diagnostics));
+            }
+        }
+
+        // 4. threshold
+        if (layerProps.TryGetProperty("threshold", out var threshVal))
+        {
+            var threshProps = CoerceEffectProps(threshVal, "level");
+            if (threshProps is not null && _effectRegistry.TryGetEffect("threshold", out var threshEffect))
+            {
+                threshEffect.Apply(bitmap, new EffectContext(layerId, threshProps, layerSpan, diagnostics));
+            }
+        }
+
+        // 5. posterize
+        if (layerProps.TryGetProperty("posterize", out var postVal))
+        {
+            var postProps = CoerceEffectProps(postVal, "levels");
+            if (postProps is not null && _effectRegistry.TryGetEffect("posterize", out var postEffect))
+            {
+                postEffect.Apply(bitmap, new EffectContext(layerId, postProps, layerSpan, diagnostics));
+            }
+        }
+
+        // 6. pixelate
+        if (layerProps.TryGetProperty("pixelate", out var pixVal))
+        {
+            var pixProps = CoerceEffectProps(pixVal, "block_size");
+            if (pixProps is not null && _effectRegistry.TryGetEffect("pixelate", out var pixEffect))
+            {
+                pixEffect.Apply(bitmap, new EffectContext(layerId, pixProps, layerSpan, diagnostics));
+            }
+        }
+
+        // 7. color_adjust
+        if (layerProps.TryGetProperty("color_adjust", out var caVal) && caVal is GfxObject caObj)
+        {
+            if (_effectRegistry.TryGetEffect("color_adjust", out var caEffect))
+            {
+                caEffect.Apply(bitmap, new EffectContext(layerId, caObj, layerSpan, diagnostics));
+            }
+        }
+
+        // 8. effects = [ { type = ..., ... }, ... ]
+        if (layerProps.TryGetProperty("effects", out var effectsVal) && effectsVal is GfxArray effectsArr)
+        {
+            foreach (var item in effectsArr.Items)
+            {
+                if (item is not GfxObject fxObj || !fxObj.TryGetProperty("type", out var fxTypeVal))
+                {
+                    diagnostics.Add(new GfxDiagnostic("FX008", $"Each item in 'effects' on layer '{layerId}' must be an object with a 'type' property.", layerSpan, DiagnosticSeverity.Error));
+                    continue;
+                }
+
+                var fxType = fxTypeVal switch
+                {
+                    GfxSymbol s => s.Identifier,
+                    GfxString str => str.Value,
+                    _ => string.Empty
+                };
+
+                if (!_effectRegistry.TryGetEffect(fxType, out var effect))
+                {
+                    diagnostics.Add(new GfxDiagnostic("FX008", $"Unknown effect type '{fxType}' on layer '{layerId}'.", layerSpan, DiagnosticSeverity.Error));
+                    continue;
+                }
+
+                effect.Apply(bitmap, new EffectContext(layerId, fxObj, layerSpan, diagnostics));
+            }
+        }
+    }
+
+    private static GfxObject? CoerceEffectProps(GfxValue val, string scalarPropName) =>
+        val switch
+        {
+            GfxObject obj => obj,
+            GfxNumber num => new GfxObject(new Dictionary<string, GfxValue>(StringComparer.Ordinal) { [scalarPropName] = num }, [scalarPropName]),
+            _ => null
+        };
+
+    private static SKBitmap ExtractCanvasRegion(SKBitmap canvas, Point2D offset, Dimensions regionSize)
+    {
+        var region = new SKBitmap(new SKImageInfo(regionSize.Width, regionSize.Height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        region.Erase(SKColors.Transparent);
+
+        var ox = (int)Math.Round(offset.X);
+        var oy = (int)Math.Round(offset.Y);
+
+        for (var y = 0; y < regionSize.Height; y++)
+        {
+            var cy = oy + y;
+            if (cy < 0 || cy >= canvas.Height)
+            {
+                continue;
+            }
+
+            for (var x = 0; x < regionSize.Width; x++)
+            {
+                var cx = ox + x;
+                if (cx < 0 || cx >= canvas.Width)
+                {
+                    continue;
+                }
+
+                region.SetPixel(x, y, canvas.GetPixel(cx, cy));
+            }
+        }
+
+        return region;
+    }
+
+    private static void WriteRegionInPlace(SKBitmap canvas, SKBitmap region, Point2D offset)
+    {
+        var ox = (int)Math.Round(offset.X);
+        var oy = (int)Math.Round(offset.Y);
+
+        for (var y = 0; y < region.Height; y++)
+        {
+            var cy = oy + y;
+            if (cy < 0 || cy >= canvas.Height)
+            {
+                continue;
+            }
+
+            for (var x = 0; x < region.Width; x++)
+            {
+                var cx = ox + x;
+                if (cx < 0 || cx >= canvas.Width)
+                {
+                    continue;
+                }
+
+                canvas.SetPixel(cx, cy, region.GetPixel(x, y));
+            }
+        }
     }
 
     private static SKBitmap ApplyLayerTransformIfNeeded(
@@ -472,6 +674,7 @@ public sealed class GfxCanvasCompositor
         Point2D targetOffset,
         GfxObject layerProps,
         GfxObject allLayersObject,
+        SKBitmap currentCanvas,
         Dimensions canvasDimensions,
         EvaluationContext context,
         DeterministicSeedProvider effectiveSeedProvider,
@@ -520,6 +723,7 @@ public sealed class GfxCanvasCompositor
                 maskLayerId,
                 maskLayerProps,
                 allLayersObject,
+                currentCanvas,
                 canvasDimensions,
                 context,
                 effectiveSeedProvider,
@@ -528,6 +732,7 @@ public sealed class GfxCanvasCompositor
                 diagnostics,
                 renderedLayers,
                 out maskOffset,
+                out _,
                 out _,
                 out _);
         }

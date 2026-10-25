@@ -1,3 +1,4 @@
+using GfxStudio.Core.Rendering.Effects;
 using GfxStudio.Core.Rendering.Layers;
 using GfxStudio.Core.Rendering.Layers.Patterns;
 using GfxStudio.Core.Rendering.Layers.Shapes;
@@ -36,6 +37,11 @@ public sealed class LayerRendererRegistry
         registry.Register(new LineLayerRenderer());
         registry.Register(new PolygonLayerRenderer());
         registry.Register(new PolygonLayerRenderer("star"));
+        foreach (var effect in LayerEffectRegistry.CreateDefault().Effects.Values)
+        {
+            registry.Register(new EffectAdjustmentLayerRenderer(effect));
+        }
+
         if (additionalRenderers is not null)
         {
             foreach (var renderer in additionalRenderers)
