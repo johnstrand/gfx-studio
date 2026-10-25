@@ -15,15 +15,21 @@ public sealed class GfxEngine
     private readonly GfxCanvasCompositor _compositor;
     private readonly OutputConfigBinder _binder;
     private readonly SingleImageOutputWriter _imageWriter;
+    private readonly AnimationFramesOutputWriter _animationFramesWriter;
+    private readonly AnimationGifOutputWriter _animationGifWriter;
 
     public GfxEngine(
         GfxCanvasCompositor? compositor = null,
         OutputConfigBinder? binder = null,
-        SingleImageOutputWriter? imageWriter = null)
+        SingleImageOutputWriter? imageWriter = null,
+        AnimationFramesOutputWriter? animationFramesWriter = null,
+        AnimationGifOutputWriter? animationGifWriter = null)
     {
         _compositor = compositor ?? new GfxCanvasCompositor();
         _binder = binder ?? new OutputConfigBinder();
         _imageWriter = imageWriter ?? new SingleImageOutputWriter();
+        _animationFramesWriter = animationFramesWriter ?? new AnimationFramesOutputWriter(_imageWriter);
+        _animationGifWriter = animationGifWriter ?? new AnimationGifOutputWriter();
     }
 
     public RenderJobResult RenderFile(string gfxFilePath, RenderOptions? options = null)
@@ -72,6 +78,8 @@ public sealed class GfxEngine
                 OutputMode.Single => RenderSeriesLike(parseResult.Document, config, options, sourceFilePath, baseDirectory, masterSeed, 1, isAtlas: false, isFrameAtlas: false, bound.Diagnostics),
                 OutputMode.Series => RenderSeriesLike(parseResult.Document, config, options, sourceFilePath, baseDirectory, masterSeed, config.Count, isAtlas: false, isFrameAtlas: false, bound.Diagnostics),
                 OutputMode.ImageMap => RenderSeriesLike(parseResult.Document, config, options, sourceFilePath, baseDirectory, masterSeed, config.Count, isAtlas: true, isFrameAtlas: config.UseFrames, bound.Diagnostics),
+                OutputMode.AnimationFrames => RenderAnimation(parseResult.Document, config, options, baseDirectory, masterSeed, isGif: false, bound.Diagnostics),
+                OutputMode.AnimationGif => RenderAnimation(parseResult.Document, config, options, baseDirectory, masterSeed, isGif: true, bound.Diagnostics),
                 _ => Failure(masterSeed, new GfxDiagnostic("OUT008", $"Output mode '{config.Mode}' is not supported.", parseResult.Document.Span, DiagnosticSeverity.Error))
             };
         }
@@ -108,7 +116,7 @@ public sealed class GfxEngine
             var frameNumber = isFrameAtlas ? ordinal : 0;
             var runCount = isFrameAtlas ? 1 : renderCount;
             var runSeed = seedProvider.DeriveSeed(runNumber, 0, "__run__");
-            var context = CreateContext(document, runNumber, runCount, runSeed, frameNumber, renderCount, seedProvider);
+            var context = CreateContext(document, runNumber, runCount, runSeed, frameNumber, isFrameAtlas ? renderCount : 1, config.Fps, seedProvider);
             var evaluator = new GfxEvaluator(context, seedProvider);
             var filenameResult = evaluator.EvaluatePath("output.filename");
             var diagnostics = filenameResult.Diagnostics;
@@ -145,7 +153,7 @@ public sealed class GfxEngine
             var run = planned[ordinal];
             try
             {
-                var context = CreateContext(document, run.RunNumber, isFrameAtlas ? 1 : renderCount, run.RunSeed, isFrameAtlas ? ordinal : 0, renderCount, seedProvider);
+                var context = CreateContext(document, run.RunNumber, isFrameAtlas ? 1 : renderCount, run.RunSeed, isFrameAtlas ? ordinal : 0, isFrameAtlas ? renderCount : 1, config.Fps, seedProvider);
                 var renderResult = _compositor.RenderDocument(context, seedProvider);
                 tiles[ordinal] = new TileResult(run.FullPath, run.SpriteSeed, renderResult.Bitmap, renderResult.Diagnostics);
             }
@@ -294,6 +302,112 @@ public sealed class GfxEngine
         }
     }
 
+    private RenderJobResult RenderAnimation(
+        Parsing.Ast.GfxDocument document,
+        OutputConfig config,
+        RenderOptions options,
+        string baseDirectory,
+        ulong masterSeed,
+        bool isGif,
+        IReadOnlyList<GfxDiagnostic> initialDiagnostics)
+    {
+        var seedProvider = new DeterministicSeedProvider(masterSeed);
+        var frameCount = config.Count;
+        var runNumber = config.StartIndex;
+        var runSeed = seedProvider.DeriveSeed(runNumber, 0, "__run__");
+
+        var plannedPaths = new string[frameCount];
+        for (var frameNumber = 0; frameNumber < frameCount; frameNumber++)
+        {
+            var context = CreateContext(document, runNumber, 1, runSeed, frameNumber, frameCount, config.Fps, seedProvider);
+            var evaluator = new GfxEvaluator(context, seedProvider);
+            var filenameResult = evaluator.EvaluatePath("output.filename");
+            if (filenameResult.HasErrors || filenameResult.Value is not GfxString filename || string.IsNullOrWhiteSpace(filename.Value))
+            {
+                return new RenderJobResult(masterSeed, [], initialDiagnostics.Concat(filenameResult.Diagnostics).ToArray());
+            }
+
+            plannedPaths[frameNumber] = Path.GetFullPath(Path.Combine(baseDirectory, filename.Value));
+        }
+
+        var tiles = new TileResult[frameCount];
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = options.MaxDegreeOfParallelism is > 0 ? options.MaxDegreeOfParallelism.Value : -1
+        };
+
+        Parallel.For(0, frameCount, parallelOptions, frameNumber =>
+        {
+            var fullPath = plannedPaths[frameNumber];
+            var frameSeed = seedProvider.DeriveSeed(runNumber, frameNumber, "__run__");
+            try
+            {
+                var context = CreateContext(document, runNumber, 1, runSeed, frameNumber, frameCount, config.Fps, seedProvider);
+                var renderResult = _compositor.RenderDocument(context, seedProvider);
+                tiles[frameNumber] = new TileResult(fullPath, frameSeed, renderResult.Bitmap, renderResult.Diagnostics);
+            }
+            catch (Exception exception)
+            {
+                var diagnostic = new GfxDiagnostic("OUT018", $"Frame {frameNumber} could not be rendered: {exception.Message}", document.Span, DiagnosticSeverity.Error);
+                tiles[frameNumber] = new TileResult(fullPath, frameSeed, null, [diagnostic]);
+            }
+        });
+
+        var diagnosticsResult = initialDiagnostics.Concat(tiles.SelectMany(tile => tile.Diagnostics)).ToList();
+        if (tiles.Any(tile => tile.Bitmap is null) || diagnosticsResult.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+        {
+            foreach (var tile in tiles)
+            {
+                tile.Bitmap?.Dispose();
+            }
+
+            return new RenderJobResult(masterSeed, [], diagnosticsResult.AsReadOnly());
+        }
+
+        if (!isGif)
+        {
+            try
+            {
+                var bitmaps = tiles.Select(tile => tile.Bitmap!).ToArray();
+                var artifacts = _animationFramesWriter.WriteFrames(bitmaps, plannedPaths, config.Dimensions);
+                for (var i = 0; i < tiles.Length; i++)
+                {
+                    tiles[i].Bitmap = null;
+                }
+
+                return new RenderJobResult(masterSeed, artifacts, diagnosticsResult.AsReadOnly());
+            }
+            finally
+            {
+                foreach (var tile in tiles)
+                {
+                    tile.Bitmap?.Dispose();
+                }
+            }
+        }
+
+        try
+        {
+            var bitmaps = tiles.Select(tile => tile.Bitmap!).ToArray();
+            var gifArtifact = _animationGifWriter.Write(
+                bitmaps,
+                plannedPaths[0],
+                config.Dimensions,
+                config.Fps,
+                config.FrameDelayMs,
+                config.Loop,
+                config.Dither);
+            return new RenderJobResult(masterSeed, [gifArtifact], diagnosticsResult.AsReadOnly());
+        }
+        finally
+        {
+            foreach (var tile in tiles)
+            {
+                tile.Bitmap?.Dispose();
+            }
+        }
+    }
+
     private static EvaluationContext CreateContext(
         Parsing.Ast.GfxDocument document,
         int runNumber,
@@ -301,12 +415,14 @@ public sealed class GfxEngine
         ulong runSeed,
         int frameNumber,
         int frameCount,
+        double fps,
         DeterministicSeedProvider seedProvider) =>
         new(
             document,
             new RunContext(runNumber, runCount, runSeed),
-            new FrameContext(frameNumber, frameCount, 15.0),
-            seedProvider.CreateRandom(runNumber, 0, "__root__"));
+            new FrameContext(frameNumber, frameCount, fps),
+            seedProvider.CreateLayerRandom(runNumber, "__root__"),
+            frameRandom: seedProvider.CreateRandom(runNumber, frameNumber, "__root__:frame"));
 
     private static string ResolveBaseDirectory(string sourceFilePath, string? outputDirectory)
     {

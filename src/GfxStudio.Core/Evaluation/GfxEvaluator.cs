@@ -208,10 +208,12 @@ public sealed class GfxEvaluator
 
         _evaluationStack.Add(fullPath);
         var previousRandom = _context.Random;
+        var previousFrameRandom = _context.FrameRandom;
         if (_seedProvider is not null && parentPathPrefix == "layers")
         {
             var layerId = fullPath["layers.".Length..];
-            _context.Random = _seedProvider.CreateRandom(_context.Run.Number, _context.Frame.Number, $"{layerId}:props");
+            _context.Random = _seedProvider.CreateLayerRandom(_context.Run.Number, $"{layerId}:props");
+            _context.FrameRandom = _seedProvider.CreateRandom(_context.Run.Number, _context.Frame.Number, $"{layerId}:frame_props");
         }
 
         try
@@ -234,6 +236,7 @@ public sealed class GfxEvaluator
         finally
         {
             _context.Random = previousRandom;
+            _context.FrameRandom = previousFrameRandom;
             _evaluationStack.RemoveAt(_evaluationStack.Count - 1);
             _activePaths.Remove(fullPath);
         }

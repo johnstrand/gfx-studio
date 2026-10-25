@@ -100,7 +100,7 @@ for (var index = 1; index < args.Length; index++)
         case "--mode":
             if (!TryParseMode(value, out var parsedMode))
             {
-                Console.Error.WriteLine($"Unsupported output mode '{value}'. Use single, series, or image_map.");
+                Console.Error.WriteLine($"Unsupported output mode '{value}'. Use single, series, image_map, animation_frames, or animation_gif.");
                 return 2;
             }
 
@@ -158,6 +158,8 @@ static bool TryParseMode(string value, out OutputMode mode)
         "single" => OutputMode.Single,
         "series" => OutputMode.Series,
         "image_map" or "imagemap" => OutputMode.ImageMap,
+        "animation_frames" or "animationframes" or "frames" => OutputMode.AnimationFrames,
+        "animation_gif" or "animationgif" or "gif" => OutputMode.AnimationGif,
         _ => (OutputMode)(-1)
     };
     return Enum.IsDefined(mode);
@@ -166,6 +168,6 @@ static bool TryParseMode(string value, out OutputMode mode)
 static void PrintUsage()
 {
     Console.WriteLine("Usage: gfx render <file.gfx> [--runs <count>] [--frames <count>] [--seed <uint64>]");
-    Console.WriteLine("                  [--mode <single|series|image_map>] [--start-index <index>]");
+    Console.WriteLine("                  [--mode <single|series|image_map|animation_frames|animation_gif>] [--start-index <index>]");
     Console.WriteLine("                  [--output <directory>] [--jobs <count>] [--atlas-metadata <file.json>]");
 }

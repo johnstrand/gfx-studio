@@ -60,8 +60,9 @@ public sealed class GfxCanvasCompositor
             parseResult.Document,
             effectiveRun,
             effectiveFrame,
-            seedProvider.CreateRandom(effectiveRun.Number, effectiveFrame.Number, "__root__"),
-            functions);
+            seedProvider.CreateLayerRandom(effectiveRun.Number, "__root__"),
+            functions,
+            frameRandom: seedProvider.CreateRandom(effectiveRun.Number, effectiveFrame.Number, "__root__:frame"));
 
         return RenderDocument(context, seedProvider);
     }
@@ -182,10 +183,14 @@ public sealed class GfxCanvasCompositor
             var blendMode = ExtractLayerBlendMode(layerProps, layerId, layerSpan, diagnostics);
             var opacity = ExtractLayerOpacity(layerProps, layerId, layerSpan, diagnostics);
 
-            // Derive isolated deterministic PRNG stream for (MasterSeed, RunNumber, FrameNumber, LayerId)
-            var layerRandom = effectiveSeedProvider.CreateRandom(context.Run.Number, context.Frame.Number, layerId);
+            // Derive isolated deterministic PRNG stream for (MasterSeed, RunNumber, LayerId)
+            // Base layer seed stays stable across frames of the same run; FrameRandom varies per frame.
+            var layerRandom = effectiveSeedProvider.CreateLayerRandom(context.Run.Number, layerId);
+            var layerFrameRandom = effectiveSeedProvider.CreateRandom(context.Run.Number, context.Frame.Number, $"{layerId}:frame");
             var previousRandom = context.Random;
+            var previousFrameRandom = context.FrameRandom;
             context.Random = layerRandom;
+            context.FrameRandom = layerFrameRandom;
 
             try
             {
@@ -208,6 +213,7 @@ public sealed class GfxCanvasCompositor
             finally
             {
                 context.Random = previousRandom;
+                context.FrameRandom = previousFrameRandom;
             }
         }
 

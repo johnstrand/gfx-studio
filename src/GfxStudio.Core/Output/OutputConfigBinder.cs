@@ -45,7 +45,7 @@ public sealed class OutputConfigBinder
             };
             if (!TryParseMode(modeName, out mode))
             {
-                diagnostics.Add(Error("OUT003", $"Unsupported output mode '{modeValue.ToDisplayString()}'. Supported modes are single, series, and image_map.", span));
+                diagnostics.Add(Error("OUT003", $"Unsupported output mode '{modeValue.ToDisplayString()}'. Supported modes are single, series, image_map, animation_frames, and animation_gif.", span));
             }
         }
 
@@ -57,20 +57,19 @@ public sealed class OutputConfigBinder
         var startIndex = ReadInteger(document, evaluator, "output.start_index", 0, 0, int.MaxValue, diagnostics, span);
         var countOrRunsDeclared = IsDeclared(document, "output.count") || IsDeclared(document, "output.runs");
         var framesDeclared = IsDeclared(document, "output.frames");
-        var useFrames = mode == OutputMode.ImageMap && (options.FrameCountOverride is not null || framesDeclared && !countOrRunsDeclared);
-        if (useFrames && countOrRunsDeclared)
+        var isAnimationMode = mode is OutputMode.AnimationFrames or OutputMode.AnimationGif;
+        var useFrames = isAnimationMode || (mode == OutputMode.ImageMap && (options.FrameCountOverride is not null || framesDeclared && !countOrRunsDeclared));
+        if (useFrames && framesDeclared && countOrRunsDeclared)
         {
             diagnostics.Add(Error("OUT017", "Specify either 'output.frames' or 'output.count'/'output.runs', not both.", span));
         }
 
-        var configuredCount = useFrames
+        var configuredCount = useFrames && (framesDeclared || !countOrRunsDeclared)
             ? ReadInteger(document, evaluator, "output.frames", 1, 1, int.MaxValue, diagnostics, span)
             : ReadAliasedInteger(document, evaluator, "output.count", "output.runs", 1, 1, int.MaxValue, diagnostics, span);
-        var count = options.RunCountOverride ?? configuredCount;
-        if (useFrames && options.FrameCountOverride is { } frameCount)
-        {
-            count = frameCount;
-        }
+        var count = useFrames
+            ? options.FrameCountOverride ?? options.RunCountOverride ?? configuredCount
+            : options.RunCountOverride ?? configuredCount;
         if (count < 1)
         {
             diagnostics.Add(Error("OUT004", "Run count must be a positive integer.", span));
@@ -129,6 +128,16 @@ public sealed class OutputConfigBinder
             }
         }
 
+        var fps = ReadPositiveDouble(document, evaluator, "output.fps", 15.0, diagnostics, span);
+        int? frameDelayMs = null;
+        if (EvaluateIfDeclared(document, evaluator, "output.frame_delay_ms") is { } delayVal)
+        {
+            frameDelayMs = ReadIntegerValue(delayVal, "output.frame_delay_ms", 70, 1, 655350, diagnostics, span);
+        }
+
+        var loop = ReadInteger(document, evaluator, "output.loop", 0, 0, ushort.MaxValue, diagnostics, span);
+        var dither = ReadBoolean(document, evaluator, "output.dither", true, diagnostics, span);
+
         var seed = ReadSeed(document, evaluator, diagnostics, span);
         diagnostics.AddRange(evaluator.Diagnostics);
         diagnostics = diagnostics.Distinct().ToList();
@@ -140,15 +149,55 @@ public sealed class OutputConfigBinder
             return new OutputConfigBindResult(null, diagnostics.AsReadOnly());
         }
 
-        if (mode is OutputMode.AnimationFrames or OutputMode.AnimationGif)
+        return new OutputConfigBindResult(
+            new OutputConfig(dimensions, validFilename.Value, mode, count, startIndex, columns, padding, spacing, background, metadataFilename, seed, useFrames, fps, frameDelayMs, loop, dither),
+            diagnostics.AsReadOnly());
+    }
+
+    private static double ReadPositiveDouble(
+        GfxDocument document,
+        GfxEvaluator evaluator,
+        string path,
+        double defaultValue,
+        List<GfxDiagnostic> diagnostics,
+        SourceSpan span)
+    {
+        var value = EvaluateIfDeclared(document, evaluator, path);
+        if (value is null)
         {
-            diagnostics.Add(Error("OUT008", $"Output mode '{mode}' is not implemented.", span));
-            return new OutputConfigBindResult(null, diagnostics.AsReadOnly());
+            return defaultValue;
         }
 
-        return new OutputConfigBindResult(
-            new OutputConfig(dimensions, validFilename.Value, mode, count, startIndex, columns, padding, spacing, background, metadataFilename, seed, useFrames),
-            diagnostics.AsReadOnly());
+        if (value is GfxNumber number && double.IsFinite(number.Value) && number.Value > 0.0)
+        {
+            return number.Value;
+        }
+
+        diagnostics.Add(Error("OUT019", $"Property '{path}' must be a positive number.", span));
+        return defaultValue;
+    }
+
+    private static bool ReadBoolean(
+        GfxDocument document,
+        GfxEvaluator evaluator,
+        string path,
+        bool defaultValue,
+        List<GfxDiagnostic> diagnostics,
+        SourceSpan span)
+    {
+        var value = EvaluateIfDeclared(document, evaluator, path);
+        if (value is null)
+        {
+            return defaultValue;
+        }
+
+        if (value is GfxBoolean boolean)
+        {
+            return boolean.Value;
+        }
+
+        diagnostics.Add(Error("OUT020", $"Property '{path}' must be a boolean.", span));
+        return defaultValue;
     }
 
     private static int ReadAliasedInteger(
@@ -242,6 +291,8 @@ public sealed class OutputConfigBinder
             "single" => OutputMode.Single,
             "series" => OutputMode.Series,
             "image_map" or "imagemap" => OutputMode.ImageMap,
+            "animation_frames" or "animationframes" or "frames" => OutputMode.AnimationFrames,
+            "animation_gif" or "animationgif" or "gif" => OutputMode.AnimationGif,
             _ => (OutputMode)(-1)
         };
         return Enum.IsDefined(mode);

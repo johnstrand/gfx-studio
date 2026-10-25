@@ -16,6 +16,7 @@ internal static class StandardFunctions
         registry.Register(Variadic("color_ramp", 2, ColorRamp));
 
         registry.Register(Variadic("random", 0, Random));
+        registry.Register(Variadic("random_frame", 0, RandomFrame));
         registry.Register(Fixed("random_int", 2, RandomInt));
         registry.Register(Fixed("random_choice", 1, RandomChoice));
 
@@ -166,23 +167,29 @@ internal static class StandardFunctions
         }
     }
 
-    private static GfxValue Random(IReadOnlyList<GfxValue> args, EvaluationContext context, SourceSpan span)
+    private static GfxValue Random(IReadOnlyList<GfxValue> args, EvaluationContext context, SourceSpan span) =>
+        SampleRandom(args, context.Random, "random", span);
+
+    private static GfxValue RandomFrame(IReadOnlyList<GfxValue> args, EvaluationContext context, SourceSpan span) =>
+        SampleRandom(args, context.FrameRandom, "random_frame", span);
+
+    private static GfxValue SampleRandom(IReadOnlyList<GfxValue> args, GfxStudio.Core.Randomness.IGfxRandom rng, string functionName, SourceSpan span)
     {
         if (args.Count == 0)
         {
-            return new GfxNumber(context.Random.NextDouble());
+            return new GfxNumber(rng.NextDouble());
         }
 
         if (args.Count != 2)
         {
-            throw ArityError("random", "0 or 2", args.Count, span);
+            throw ArityError(functionName, "0 or 2", args.Count, span);
         }
 
-        var min = Number(args, 0, "random", span);
-        var max = Number(args, 1, "random", span);
+        var min = Number(args, 0, functionName, span);
+        var max = Number(args, 1, functionName, span);
         try
         {
-            return new GfxNumber(context.Random.NextDouble(min, max));
+            return new GfxNumber(rng.NextDouble(min, max));
         }
         catch (ArgumentOutOfRangeException exception)
         {

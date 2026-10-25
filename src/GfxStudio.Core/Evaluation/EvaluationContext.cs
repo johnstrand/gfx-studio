@@ -119,12 +119,14 @@ public sealed class EvaluationContext
         FrameContext frame = default,
         IGfxRandom? random = null,
         IEnumerable<IGfxCallable>? functions = null,
-        GfxFunctionRegistry? functionRegistry = null)
+        GfxFunctionRegistry? functionRegistry = null,
+        IGfxRandom? frameRandom = null)
     {
         Document = document;
         Run = run.Count <= 0 ? new RunContext(0, 1, 0) : run;
         Frame = frame.Count <= 0 ? new FrameContext(0, 1, 15.0) : frame;
         Random = random ?? new GfxRandom(Run.Seed);
+        FrameRandom = frameRandom ?? new GfxRandom(Run.Seed ^ unchecked((ulong)(long)Frame.Number * 0x9E3779B97F4A7C15UL));
         FunctionRegistry = functionRegistry ?? GfxFunctionRegistry.CreateDefault();
 
         if (functions is not null)
@@ -143,6 +145,8 @@ public sealed class EvaluationContext
     public FrameContext Frame { get; }
 
     public IGfxRandom Random { get; set; }
+
+    public IGfxRandom FrameRandom { get; set; }
 
     public GfxFunctionRegistry FunctionRegistry { get; }
 

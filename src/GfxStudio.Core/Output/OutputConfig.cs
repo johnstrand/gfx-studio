@@ -15,4 +15,8 @@ public sealed record OutputConfig(
     ColorRgba Background,
     string? MetadataFilename,
     ulong? Seed,
-    bool UseFrames);
+    bool UseFrames,
+    double Fps = 15.0,
+    int? FrameDelayMs = null,
+    int Loop = 0,
+    bool Dither = true);

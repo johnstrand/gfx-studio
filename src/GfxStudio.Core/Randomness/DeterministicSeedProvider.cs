@@ -27,4 +27,12 @@ public sealed class DeterministicSeedProvider
     /// <summary>Creates the deterministic random stream for the specified layer execution.</summary>
     public GfxRandom CreateRandom(int runNumber, int frameNumber, string layerKey) =>
         new(DeriveSeed(runNumber, frameNumber, layerKey));
+
+    /// <summary>Derives a run-scoped 64-bit seed that remains stable across animation frames of the same run.</summary>
+    public ulong DeriveLayerSeed(int runNumber, string layerKey) =>
+        DeriveSeed(runNumber, 0, layerKey);
+
+    /// <summary>Creates a run-scoped random stream that remains stable across animation frames of the same run.</summary>
+    public GfxRandom CreateLayerRandom(int runNumber, string layerKey) =>
+        new(DeriveLayerSeed(runNumber, layerKey));
 }

@@ -17,6 +17,11 @@ public sealed class SingleImageOutputWriter
             return EncodeBmp(bitmap);
         }
 
+        if (extension == ".gif")
+        {
+            return Gif.GfxGifEncoder.Encode([bitmap]);
+        }
+
         var format = extension switch
         {
             ".png" => SKEncodedImageFormat.Png,
