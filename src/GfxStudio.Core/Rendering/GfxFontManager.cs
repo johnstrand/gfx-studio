@@ -7,7 +7,7 @@ public sealed class GfxFontManager
 {
     public const string FallbackFontResourceName = "GfxStudio.Core.Resources.Fonts.Roboto.ttf";
 
-    public SKTypeface LoadTypeface(string? fontPath, string? fontFamily, string sourceFilePath)
+    public SKTypeface LoadTypeface(string? fontPath, string? fontFamily, string sourceFilePath, SKFontStyle? fontStyle = null)
     {
         ArgumentNullException.ThrowIfNull(sourceFilePath);
 
@@ -28,7 +28,9 @@ public sealed class GfxFontManager
 
         if (!string.IsNullOrWhiteSpace(fontFamily))
         {
-            var matchedTypeface = SKFontManager.Default.MatchFamily(fontFamily);
+            var matchedTypeface = fontStyle is not null
+                ? SKFontManager.Default.MatchFamily(fontFamily, fontStyle)
+                : SKFontManager.Default.MatchFamily(fontFamily);
             if (matchedTypeface is not null)
             {
                 return matchedTypeface;

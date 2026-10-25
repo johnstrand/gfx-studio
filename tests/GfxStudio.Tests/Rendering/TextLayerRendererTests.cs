@@ -110,6 +110,161 @@ public sealed class TextLayerRendererTests
         diagnostic.Message.Should().Contain("text");
     }
 
+    [Fact]
+    public void RenderSource_BoldWeightRendersVisiblyHeavierThanRegular()
+    {
+        const string regularSource = """
+            layers = {
+              label = {
+                type = text
+                text = "HelloWorld"
+                font_size = 32
+                font_weight = normal
+                color = rgb(255, 255, 255)
+              }
+            }
+            output = { dimensions = { width = 160, height = 48 } }
+            """;
+
+        const string boldSource = """
+            layers = {
+              label = {
+                type = text
+                text = "HelloWorld"
+                font_size = 32
+                font_weight = bold
+                color = rgb(255, 255, 255)
+              }
+            }
+            output = { dimensions = { width = 160, height = 48 } }
+            """;
+
+        using var regResult = new GfxCanvasCompositor().RenderSource(regularSource);
+        using var boldResult = new GfxCanvasCompositor().RenderSource(boldSource);
+
+        regResult.Diagnostics.Should().BeEmpty();
+        boldResult.Diagnostics.Should().BeEmpty();
+
+        var regBytes = regResult.Bitmap!.GetPixelSpan().ToArray();
+        var boldBytes = boldResult.Bitmap!.GetPixelSpan().ToArray();
+        regBytes.Should().NotEqual(boldBytes);
+
+        var regOpaqueCount = CountNonTransparentPixels(regResult.Bitmap!);
+        var boldOpaqueCount = CountNonTransparentPixels(boldResult.Bitmap!);
+        boldOpaqueCount.Should().BeGreaterThan(regOpaqueCount);
+    }
+
+    [Fact]
+    public void RenderSource_SupportsNamedAndNumericFontWeights()
+    {
+        const string source = """
+            layers = {
+              t1 = { type = text, text = "A", font_weight = thin }
+              t2 = { type = text, text = "B", font_weight = "light" }
+              t3 = { type = text, text = "C", font_weight = 600 }
+              t4 = { type = text, text = "D", font_weight = 800 }
+            }
+            output = { dimensions = { width = 64, height = 64 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+        result.Diagnostics.Should().BeEmpty();
+        result.Bitmap.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void RenderSource_ItalicStyleRendersVisiblySlanted()
+    {
+        const string uprightSource = """
+            layers = {
+              label = {
+                type = text
+                text = "SlantTest"
+                font_size = 28
+                font_style = normal
+                color = rgb(255, 255, 255)
+              }
+            }
+            output = { dimensions = { width = 140, height = 40 } }
+            """;
+
+        const string italicSource = """
+            layers = {
+              label = {
+                type = text
+                text = "SlantTest"
+                font_size = 28
+                font_style = italic
+                color = rgb(255, 255, 255)
+              }
+            }
+            output = { dimensions = { width = 140, height = 40 } }
+            """;
+
+        using var upResult = new GfxCanvasCompositor().RenderSource(uprightSource);
+        using var itResult = new GfxCanvasCompositor().RenderSource(italicSource);
+
+        upResult.Diagnostics.Should().BeEmpty();
+        itResult.Diagnostics.Should().BeEmpty();
+
+        var upBytes = upResult.Bitmap!.GetPixelSpan().ToArray();
+        var itBytes = itResult.Bitmap!.GetPixelSpan().ToArray();
+        upBytes.Should().NotEqual(itBytes);
+    }
+
+    [Fact]
+    public void RenderSource_InvalidFontWeight_ReportsRND023()
+    {
+        const string source = """
+            layers = {
+              label = {
+                type = text
+                text = "Hi"
+                font_weight = super_heavy
+              }
+            }
+            output = { dimensions = { width = 32, height = 32 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+        result.Diagnostics.Should().Contain(d => d.Code == "RND023" && d.Message.Contains("Unknown font weight 'super_heavy'"));
+    }
+
+    [Fact]
+    public void RenderSource_InvalidFontStyle_ReportsRND024()
+    {
+        const string source = """
+            layers = {
+              label = {
+                type = text
+                text = "Hi"
+                font_style = cursive
+              }
+            }
+            output = { dimensions = { width = 32, height = 32 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+        result.Diagnostics.Should().Contain(d => d.Code == "RND024" && d.Message.Contains("Unknown font style 'cursive'"));
+    }
+
+    private static int CountNonTransparentPixels(SKBitmap bitmap)
+    {
+        var count = 0;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                if (bitmap.GetPixel(x, y).Alpha > 10)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
+    }
+
     private static SKRectI FindVisibleBounds(SKBitmap bitmap)
     {
         var left = bitmap.Width;
