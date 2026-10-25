@@ -1,0 +1,70 @@
+// Independent layer and effect seeds in a small procedural texture atlas.
+// The nebula stays fixed; the starfield follows the master seed, and the
+// cellular overlay changes for each tile.
+seed = 2026
+
+layers = {
+  background = {
+    type = fill
+    color = rgb(8, 12, 30)
+  }
+
+  nebula = {
+    type = fractal_clouds
+    seed = 4242
+    scale = 2.8
+    octaves = 4
+    color = color_ramp(rgb(20, 30, 74), rgb(112, 61, 151), rgb(236, 112, 166))
+    opacity = 0.78
+    // This effect's noise stream is pinned independently from the layer.
+    warp = { seed = 51, strength = 2.0, scale = 3.5 }
+  }
+
+  stars = {
+    type = starfield
+    // No layer seed: this is driven by the document/CLI master seed.
+    density = 0.0025
+    min_size = 0.4
+    max_size = 1.5
+    glow = 0.7
+    mix = screen
+    // Array-form effects can have their own seed too.
+    effects = [{ type = warp, seed = 99, strength = 1.2, scale = 2.5 }]
+  }
+
+  cells = {
+    type = worley
+    seed = 1000 + run.number
+    cell_size = 17
+    color = color_ramp(rgba(0, 0, 0, 0), rgba(34, 211, 238, 90), rgba(216, 180, 254, 150))
+    mix = screen
+    opacity = 0.72
+  }
+
+  label = {
+    type = text
+    size = output.dimensions
+    text = "RUN ${run.number:00}"
+    font_size = 11
+    color = rgb(255, 255, 255)
+    align = { vertical: ALIGN.TOP, horizontal: ALIGN.CENTER }
+    offset = { x = 0, y = 4 }
+    drop_shadow = {
+      offset = { x = 0, y = 1 }
+      blur = 2
+      color = rgba(0, 0, 0, 210)
+    }
+  }
+}
+
+output = {
+  mode = image_map
+  dimensions = { width = 96, height = 96 }
+  count = 6
+  columns = 3
+  padding = 3
+  spacing = 3
+  background = rgb(4, 6, 18)
+  filename = "seeded_variations.png"
+  metadata_filename = "seeded_variations.json"
+}

@@ -118,6 +118,14 @@ Synthwave sunset and perspective grid rendered using per-pixel JavaScript shader
 gfx render samples/pixel_shaders.gfx --output-dir ./output_shaders
 ```
 
+### 9. Independently Seeded Variations (`samples/seeded_variations.gfx`)
+Creates a six-tile texture atlas with a stable seeded nebula, a master-seed-driven starfield, a cellular layer varied by `run.number`, and independently seeded inline and array-form warp effects. Try different master seeds with `--seed`: the starfield changes, while the explicitly seeded streams stay pinned.
+
+```bash
+gfx render samples/seeded_variations.gfx --output-dir ./output_seeded
+gfx render samples/seeded_variations.gfx --seed 7 --output-dir ./output_seeded_alt
+```
+
 ---
 
 ## Embedding in C# / .NET
