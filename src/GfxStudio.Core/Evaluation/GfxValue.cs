@@ -102,6 +102,12 @@ public abstract record GfxValue
     /// <summary>Attempts to coerce this value into a <see cref="Point2D"/> value.</summary>
     public bool TryCoerceToPoint2D(out Point2D point)
     {
+        if (this is GfxDimensions gfxDimensions)
+        {
+            point = new Point2D(gfxDimensions.Dimensions.Width, gfxDimensions.Dimensions.Height);
+            return true;
+        }
+
         if (this is GfxObject obj
             && obj.Properties.TryGetValue("x", out var xVal) && xVal is GfxNumber xNum
             && obj.Properties.TryGetValue("y", out var yVal) && yVal is GfxNumber yNum)

@@ -624,32 +624,296 @@ public sealed class GfxEvaluator
             return new GfxString(left.ToDisplayString() + right.ToDisplayString());
         }
 
-        if (left is not GfxNumber leftNum || right is not GfxNumber rightNum)
+        // Numeric arithmetic: GfxNumber <op> GfxNumber
+        if (left is GfxNumber leftNum && right is GfxNumber rightNum)
         {
-            AddDiagnostic(
-                "EVAL006",
-                $"Binary operator '{binary.Operator}' requires numeric operands, but got '{left.GetType().Name}' and '{right.GetType().Name}'.",
-                binary.Span);
-            return null;
+            if (binary.Operator is BinaryOperator.Divide or BinaryOperator.Modulo && Math.Abs(rightNum.Value) < double.Epsilon)
+            {
+                AddDiagnostic("EVAL007", "Division or modulo by zero.", binary.Span);
+                return null;
+            }
+
+            var result = binary.Operator switch
+            {
+                BinaryOperator.Add => leftNum.Value + rightNum.Value,
+                BinaryOperator.Subtract => leftNum.Value - rightNum.Value,
+                BinaryOperator.Multiply => leftNum.Value * rightNum.Value,
+                BinaryOperator.Divide => leftNum.Value / rightNum.Value,
+                BinaryOperator.Modulo => leftNum.Value % rightNum.Value,
+                _ => 0.0
+            };
+
+            return new GfxNumber(result);
         }
 
-        if (binary.Operator is BinaryOperator.Divide or BinaryOperator.Modulo && Math.Abs(rightNum.Value) < double.Epsilon)
+        // GfxDimensions <op> GfxDimensions
+        if (left is GfxDimensions leftDims && right is GfxDimensions rightDims)
         {
-            AddDiagnostic("EVAL007", "Division or modulo by zero.", binary.Span);
-            return null;
+            if (binary.Operator is BinaryOperator.Divide or BinaryOperator.Modulo
+                && (rightDims.Dimensions.Width == 0 || rightDims.Dimensions.Height == 0))
+            {
+                AddDiagnostic("EVAL007", "Division or modulo by zero.", binary.Span);
+                return null;
+            }
+
+            var rw = binary.Operator switch
+            {
+                BinaryOperator.Add => leftDims.Dimensions.Width + rightDims.Dimensions.Width,
+                BinaryOperator.Subtract => leftDims.Dimensions.Width - rightDims.Dimensions.Width,
+                BinaryOperator.Multiply => leftDims.Dimensions.Width * rightDims.Dimensions.Width,
+                BinaryOperator.Divide => (double)leftDims.Dimensions.Width / rightDims.Dimensions.Width,
+                BinaryOperator.Modulo => leftDims.Dimensions.Width % rightDims.Dimensions.Width,
+                _ => 0.0
+            };
+
+            var rh = binary.Operator switch
+            {
+                BinaryOperator.Add => leftDims.Dimensions.Height + rightDims.Dimensions.Height,
+                BinaryOperator.Subtract => leftDims.Dimensions.Height - rightDims.Dimensions.Height,
+                BinaryOperator.Multiply => leftDims.Dimensions.Height * rightDims.Dimensions.Height,
+                BinaryOperator.Divide => (double)leftDims.Dimensions.Height / rightDims.Dimensions.Height,
+                BinaryOperator.Modulo => leftDims.Dimensions.Height % rightDims.Dimensions.Height,
+                _ => 0.0
+            };
+
+            if (!double.IsFinite(rw) || !double.IsFinite(rh))
+            {
+                AddDiagnostic("EVAL010", "Dimensions must be finite positive integers.", binary.Span);
+                return null;
+            }
+
+            var w = (int)Math.Round(rw);
+            var h = (int)Math.Round(rh);
+
+            if (w <= 0 || h <= 0)
+            {
+                AddDiagnostic("EVAL010", $"Dimensions must be positive integers, but got {w}x{h}.", binary.Span);
+                return null;
+            }
+
+            return new GfxDimensions(new Dimensions(w, h));
         }
 
-        var result = binary.Operator switch
+        // GfxDimensions <op> GfxNumber
+        if (left is GfxDimensions leftDims2 && right is GfxNumber rightNum2)
         {
-            BinaryOperator.Add => leftNum.Value + rightNum.Value,
-            BinaryOperator.Subtract => leftNum.Value - rightNum.Value,
-            BinaryOperator.Multiply => leftNum.Value * rightNum.Value,
-            BinaryOperator.Divide => leftNum.Value / rightNum.Value,
-            BinaryOperator.Modulo => leftNum.Value % rightNum.Value,
-            _ => 0.0
+            if (binary.Operator is BinaryOperator.Divide or BinaryOperator.Modulo && Math.Abs(rightNum2.Value) < double.Epsilon)
+            {
+                AddDiagnostic("EVAL007", "Division or modulo by zero.", binary.Span);
+                return null;
+            }
+
+            var rw = binary.Operator switch
+            {
+                BinaryOperator.Add => leftDims2.Dimensions.Width + rightNum2.Value,
+                BinaryOperator.Subtract => leftDims2.Dimensions.Width - rightNum2.Value,
+                BinaryOperator.Multiply => leftDims2.Dimensions.Width * rightNum2.Value,
+                BinaryOperator.Divide => leftDims2.Dimensions.Width / rightNum2.Value,
+                BinaryOperator.Modulo => leftDims2.Dimensions.Width % rightNum2.Value,
+                _ => 0.0
+            };
+
+            var rh = binary.Operator switch
+            {
+                BinaryOperator.Add => leftDims2.Dimensions.Height + rightNum2.Value,
+                BinaryOperator.Subtract => leftDims2.Dimensions.Height - rightNum2.Value,
+                BinaryOperator.Multiply => leftDims2.Dimensions.Height * rightNum2.Value,
+                BinaryOperator.Divide => leftDims2.Dimensions.Height / rightNum2.Value,
+                BinaryOperator.Modulo => leftDims2.Dimensions.Height % rightNum2.Value,
+                _ => 0.0
+            };
+
+            if (!double.IsFinite(rw) || !double.IsFinite(rh))
+            {
+                AddDiagnostic("EVAL010", "Dimensions must be finite positive integers.", binary.Span);
+                return null;
+            }
+
+            var w = (int)Math.Round(rw);
+            var h = (int)Math.Round(rh);
+
+            if (w <= 0 || h <= 0)
+            {
+                AddDiagnostic("EVAL010", $"Dimensions must be positive integers, but got {w}x{h}.", binary.Span);
+                return null;
+            }
+
+            return new GfxDimensions(new Dimensions(w, h));
+        }
+
+        // GfxNumber * GfxDimensions or GfxNumber + GfxDimensions
+        if (left is GfxNumber leftNum2 && right is GfxDimensions rightDims2)
+        {
+            if (binary.Operator is BinaryOperator.Multiply or BinaryOperator.Add)
+            {
+                var rw = binary.Operator == BinaryOperator.Multiply
+                    ? leftNum2.Value * rightDims2.Dimensions.Width
+                    : leftNum2.Value + rightDims2.Dimensions.Width;
+
+                var rh = binary.Operator == BinaryOperator.Multiply
+                    ? leftNum2.Value * rightDims2.Dimensions.Height
+                    : leftNum2.Value + rightDims2.Dimensions.Height;
+
+                if (!double.IsFinite(rw) || !double.IsFinite(rh))
+                {
+                    AddDiagnostic("EVAL010", "Dimensions must be finite positive integers.", binary.Span);
+                    return null;
+                }
+
+                var w = (int)Math.Round(rw);
+                var h = (int)Math.Round(rh);
+
+                if (w <= 0 || h <= 0)
+                {
+                    AddDiagnostic("EVAL010", $"Dimensions must be positive integers, but got {w}x{h}.", binary.Span);
+                    return null;
+                }
+
+                return new GfxDimensions(new Dimensions(w, h));
+            }
+        }
+
+        // PointObj <op> GfxNumber
+        if (TryExtractPoint(left, out var px, out var py) && right is GfxNumber scalarRight)
+        {
+            if (binary.Operator is BinaryOperator.Divide or BinaryOperator.Modulo && Math.Abs(scalarRight.Value) < double.Epsilon)
+            {
+                AddDiagnostic("EVAL007", "Division or modulo by zero.", binary.Span);
+                return null;
+            }
+
+            var ox = binary.Operator switch
+            {
+                BinaryOperator.Add => px + scalarRight.Value,
+                BinaryOperator.Subtract => px - scalarRight.Value,
+                BinaryOperator.Multiply => px * scalarRight.Value,
+                BinaryOperator.Divide => px / scalarRight.Value,
+                BinaryOperator.Modulo => px % scalarRight.Value,
+                _ => 0.0
+            };
+
+            var oy = binary.Operator switch
+            {
+                BinaryOperator.Add => py + scalarRight.Value,
+                BinaryOperator.Subtract => py - scalarRight.Value,
+                BinaryOperator.Multiply => py * scalarRight.Value,
+                BinaryOperator.Divide => py / scalarRight.Value,
+                BinaryOperator.Modulo => py % scalarRight.Value,
+                _ => 0.0
+            };
+
+            return CreatePointObject(ox, oy);
+        }
+
+        // GfxNumber * PointObj or GfxNumber + PointObj
+        if (left is GfxNumber scalarLeft && TryExtractPoint(right, out var px2, out var py2))
+        {
+            if (binary.Operator is BinaryOperator.Multiply or BinaryOperator.Add)
+            {
+                var ox = binary.Operator == BinaryOperator.Multiply
+                    ? scalarLeft.Value * px2
+                    : scalarLeft.Value + px2;
+
+                var oy = binary.Operator == BinaryOperator.Multiply
+                    ? scalarLeft.Value * py2
+                    : scalarLeft.Value + py2;
+
+                return CreatePointObject(ox, oy);
+            }
+        }
+
+        // PointObj <op> PointObj or PointObj <op> GfxDimensions or GfxDimensions <op> PointObj
+        if (TryExtractPointOrDimensions(left, out var lx, out var ly, out var leftIsPt)
+            && TryExtractPointOrDimensions(right, out var rx, out var ry, out var rightIsPt)
+            && (leftIsPt || rightIsPt))
+        {
+            if (binary.Operator is BinaryOperator.Divide or BinaryOperator.Modulo
+                && (Math.Abs(rx) < double.Epsilon || Math.Abs(ry) < double.Epsilon))
+            {
+                AddDiagnostic("EVAL007", "Division or modulo by zero.", binary.Span);
+                return null;
+            }
+
+            var ox = binary.Operator switch
+            {
+                BinaryOperator.Add => lx + rx,
+                BinaryOperator.Subtract => lx - rx,
+                BinaryOperator.Multiply => lx * rx,
+                BinaryOperator.Divide => lx / rx,
+                BinaryOperator.Modulo => lx % rx,
+                _ => 0.0
+            };
+
+            var oy = binary.Operator switch
+            {
+                BinaryOperator.Add => ly + ry,
+                BinaryOperator.Subtract => ly - ry,
+                BinaryOperator.Multiply => ly * ry,
+                BinaryOperator.Divide => ly / ry,
+                BinaryOperator.Modulo => ly % ry,
+                _ => 0.0
+            };
+
+            return CreatePointObject(ox, oy);
+        }
+
+        AddDiagnostic(
+            "EVAL006",
+            $"Binary operator '{binary.Operator}' requires numeric operands, but got '{left.GetType().Name}' and '{right.GetType().Name}'.",
+            binary.Span);
+        return null;
+    }
+
+    private static GfxObject CreatePointObject(double x, double y)
+    {
+        var props = new Dictionary<string, GfxValue>(StringComparer.Ordinal)
+        {
+            ["x"] = new GfxNumber(x),
+            ["y"] = new GfxNumber(y)
         };
+        return new GfxObject(props, ["x", "y"]);
+    }
 
-        return new GfxNumber(result);
+    private static bool TryExtractPoint(GfxValue value, out double x, out double y)
+    {
+        if (value is GfxObject obj
+            && obj.Properties.TryGetValue("x", out var xVal) && xVal is GfxNumber xNum
+            && obj.Properties.TryGetValue("y", out var yVal) && yVal is GfxNumber yNum)
+        {
+            x = xNum.Value;
+            y = yNum.Value;
+            return true;
+        }
+
+        x = 0;
+        y = 0;
+        return false;
+    }
+
+    private static bool TryExtractPointOrDimensions(GfxValue value, out double x, out double y, out bool isPointObj)
+    {
+        if (value is GfxObject obj
+            && obj.Properties.TryGetValue("x", out var xVal) && xVal is GfxNumber xNum
+            && obj.Properties.TryGetValue("y", out var yVal) && yVal is GfxNumber yNum)
+        {
+            x = xNum.Value;
+            y = yNum.Value;
+            isPointObj = true;
+            return true;
+        }
+
+        if (value is GfxDimensions dims)
+        {
+            x = dims.Dimensions.Width;
+            y = dims.Dimensions.Height;
+            isPointObj = false;
+            return true;
+        }
+
+        x = 0;
+        y = 0;
+        isPointObj = false;
+        return false;
     }
 
     private GfxValue? EvaluateFunctionCall(FunctionCallExpr call, string? currentPathPrefix)
