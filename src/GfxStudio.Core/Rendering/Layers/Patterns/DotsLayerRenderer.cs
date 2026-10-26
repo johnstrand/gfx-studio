@@ -13,7 +13,7 @@ public sealed class DotsLayerRenderer : ILayerRenderer
     public string LayerType => "dots";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["spacing", "cell_size", "radius", "color", "background"];
+        ["spacing", "cell_size", "radius", "color", "background", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -22,6 +22,7 @@ public sealed class DotsLayerRenderer : ILayerRenderer
         var bitmap = context.CreateLayerBitmap();
         var (spacingX, spacingY) = ResolveSpacing(context, defaultSpacing: 12.0);
         var radius = StripesLayerRenderer.ResolvePositiveDouble(context, "radius", null, defaultValue: 4.0);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
         var dotColor = CheckerboardLayerRenderer.ResolveColor(context, "color", ColorRgba.White);
         var background = CheckerboardLayerRenderer.ResolveColor(context, "background", new ColorRgba(0, 0, 0, 0));
 
@@ -32,15 +33,17 @@ public sealed class DotsLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var cellCenterY = (Math.Floor(y / spacingY) + 0.5) * spacingY;
-            var dy = (y + 0.5) - cellCenterY;
+            var sy = y - offsetY;
+            var cellCenterY = (Math.Floor(sy / spacingY) + 0.5) * spacingY;
+            var dy = (sy + 0.5) - cellCenterY;
             var dySq = dy * dy;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var cellCenterX = (Math.Floor(x / spacingX) + 0.5) * spacingX;
-                var dx = (x + 0.5) - cellCenterX;
+                var sx = x - offsetX;
+                var cellCenterX = (Math.Floor(sx / spacingX) + 0.5) * spacingX;
+                var dx = (sx + 0.5) - cellCenterX;
                 var distSq = (dx * dx) + dySq;
                 var chosen = distSq <= radiusSq ? dotColor : background;
 

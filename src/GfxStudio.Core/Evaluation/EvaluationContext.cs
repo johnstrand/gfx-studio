@@ -1,7 +1,9 @@
+using GfxStudio.Core.Diagnostics;
 using GfxStudio.Core.Parsing.Ast;
 using GfxStudio.Core.Functions;
 using GfxStudio.Core.Primitives;
 using GfxStudio.Core.Randomness;
+using SkiaSharp;
 
 namespace GfxStudio.Core.Evaluation;
 
@@ -178,4 +180,10 @@ public sealed class EvaluationContext
     public Dimensions CurrentLayerDimensions { get; set; }
 
     public Dimensions OutputDimensions { get; set; }
+
+    /// <summary>Optional callback wired by <see cref="Rendering.GfxCanvasCompositor"/> to resolve a rendered layer bitmap by name.</summary>
+    public Func<string, SourceSpan, SKBitmap?>? ResolveLayerBitmap { get; set; }
+
+    /// <summary>Optional callback wired by <see cref="Rendering.GfxCanvasCompositor"/> to resolve the current composited canvas up to the active layer.</summary>
+    public Func<string?, SourceSpan, SKBitmap?>? ResolveCanvasBitmap { get; set; }
 }

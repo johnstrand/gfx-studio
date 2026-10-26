@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using GfxStudio.Core.Evaluation;
 using GfxStudio.Core.Noise;
 using GfxStudio.Core.Primitives;
+using GfxStudio.Core.Rendering.Layers.Patterns;
 using SkiaSharp;
 
 namespace GfxStudio.Core.Rendering.Layers;
@@ -25,7 +26,7 @@ public sealed class WorleyLayerRenderer : ILayerRenderer
     public string LayerType { get; }
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["color", "cell_size", "scale", "frequency", "jitter", "distance_metric", "metric", "feature", "warp_strength", "warp_scale"];
+        ["color", "cell_size", "scale", "frequency", "jitter", "distance_metric", "metric", "feature", "warp_strength", "warp_scale", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -44,6 +45,7 @@ public sealed class WorleyLayerRenderer : ILayerRenderer
         var feature = ResolveFeature(context);
         var warpStrength = ResolveDouble(context, "warp_strength", null, defaultValue: 0.0);
         var warpScale = ResolvePositiveDouble(context, "warp_scale", null, defaultValue: 4.0);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         var worley = new WorleyNoise(context.Random);
         PerlinNoise? warpNoiseX = null;
@@ -65,18 +67,20 @@ public sealed class WorleyLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var baseNy = y * invCellY;
-            var wy = y * invWarpH;
+            var sy = y - offsetY;
+            var baseNy = sy * invCellY;
+            var wy = sy * invWarpH;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var nx = x * invCellX;
+                var sx = x - offsetX;
+                var nx = sx * invCellX;
                 var ny = baseNy;
 
                 if (warpNoiseX is not null && warpNoiseY is not null)
                 {
-                    var wx = x * invWarpW;
+                    var wx = sx * invWarpW;
                     nx += warpStrength * warpNoiseX.Sample2D(wx, wy);
                     ny += warpStrength * warpNoiseY.Sample2D(wx, wy);
                 }

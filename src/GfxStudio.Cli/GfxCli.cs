@@ -1,9 +1,12 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using GfxStudio.Core.Diagnostics;
+using GfxStudio.Core.Documentation;
 using GfxStudio.Core.Evaluation;
+using GfxStudio.Core.Formatting;
 using GfxStudio.Core.Output;
 using GfxStudio.Core.Parsing;
 using GfxStudio.Core.Parsing.Ast;
@@ -106,13 +109,99 @@ public static partial class GfxCli
                 context.ParseResult.GetValueForOption(inspectJsonOption));
         });
 
+        var format = new Command("format", "Format a .gfx file in-place using GfxFormatter (or verify formatting with --check).");
+        var checkFormatOption = new Option<bool>("--check", "Verify that the file is already formatted without writing changes.");
+        format.AddArgument(fileArgument);
+        format.AddOption(checkFormatOption);
+        format.SetHandler(context =>
+        {
+            context.ExitCode = FormatFile(
+                context.ParseResult.GetValueForArgument(fileArgument),
+                context.ParseResult.GetValueForOption(checkFormatOption));
+        });
+
+        var wiki = new Command("wiki", "Generate GitHub Wiki Markdown reference pages from registered layer and effect metadata.");
+        var wikiOutputOption = new Option<string?>(["--output", "--output-dir", "-o"], "Directory where Wiki Markdown pages should be written (defaults to ./artifacts/wiki).");
+        wiki.AddOption(wikiOutputOption);
+        wiki.SetHandler(context =>
+        {
+            var outDir = context.ParseResult.GetValueForOption(wikiOutputOption) ?? Path.Combine(Environment.CurrentDirectory, "artifacts", "wiki");
+            context.ExitCode = GenerateWiki(outDir);
+        });
+
         root.AddCommand(render);
         root.AddCommand(validate);
         root.AddCommand(inspect);
+        root.AddCommand(format);
+        root.AddCommand(wiki);
         return root;
     }
 
     public static Task<int> InvokeAsync(string[] args) => BuildRootCommand().InvokeAsync(args);
+
+    private static int FormatFile(string filePath, bool checkOnly)
+    {
+        if (!TryReadSource(filePath, out var fullPath, out var source))
+        {
+            return 1;
+        }
+
+        var formatResult = GfxFormatter.Format(source, fullPath);
+        if (formatResult.HasErrors)
+        {
+            WriteDiagnostics(formatResult.Diagnostics, source, KnownNames(source, fullPath));
+            return 1;
+        }
+
+        if (checkOnly)
+        {
+            if (formatResult.Changed)
+            {
+                Console.Error.WriteLine($"Not formatted: {fullPath}");
+                return 1;
+            }
+
+            Console.WriteLine($"Formatted: {fullPath}");
+            return 0;
+        }
+
+        if (formatResult.Changed)
+        {
+            try
+            {
+                File.WriteAllText(fullPath, formatResult.FormattedText, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"error[CLI001]: Could not write '{fullPath}': {exception.Message}");
+                return 1;
+            }
+        }
+
+        Console.WriteLine($"Formatted: {fullPath}");
+        return 0;
+    }
+
+    private static int GenerateWiki(string outputDirectory)
+    {
+        try
+        {
+            var fullOutDir = Path.GetFullPath(outputDirectory);
+            var files = GfxWikiGenerator.WriteToDirectory(fullOutDir);
+            Console.WriteLine($"Generated {files.Count} Wiki pages in '{fullOutDir}':");
+            foreach (var file in files)
+            {
+                Console.WriteLine($"  {Path.GetFileName(file)}");
+            }
+
+            return 0;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"error[CLI001]: Could not write Wiki pages: {exception.Message}");
+            return 1;
+        }
+    }
 
     private static int RenderOnce(string filePath, RenderOptions options)
     {

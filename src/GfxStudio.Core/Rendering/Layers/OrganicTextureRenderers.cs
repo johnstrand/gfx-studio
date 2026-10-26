@@ -21,7 +21,7 @@ public sealed class WoodLayerRenderer : ILayerRenderer
     public string LayerType => "wood";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["rings", "frequency", "turbulence", "warp_strength", "grain", "scale", "angle", "rotation", "color"];
+        ["rings", "frequency", "turbulence", "warp_strength", "grain", "scale", "angle", "rotation", "color", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -33,6 +33,7 @@ public sealed class WoodLayerRenderer : ILayerRenderer
         var grain = Math.Clamp(BricksLayerRenderer.ResolveDouble(context, "grain", null, defaultValue: 0.25), 0.0, 1.0);
         var scale = Math.Max(0.1, BricksLayerRenderer.ResolveDouble(context, "scale", null, defaultValue: 3.0));
         var angleDeg = BricksLayerRenderer.ResolveDouble(context, "angle", "rotation", defaultValue: 0.0);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         var ramp = DefaultWoodRamp;
         if (context.LayerProperties.TryGetProperty("color", out var colVal) && colVal is GfxColorRamp cr)
@@ -55,12 +56,12 @@ public sealed class WoodLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var ny = (y * invH) - 0.5;
+            var ny = ((y - offsetY) * invH) - 0.5;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var nx = (x * invW) - 0.5;
+                var nx = ((x - offsetX) * invW) - 0.5;
                 var rx = (nx * cosA) - (ny * sinA);
                 var ry = (nx * sinA) + (ny * cosA);
 
@@ -97,7 +98,7 @@ public sealed class MarbleLayerRenderer : ILayerRenderer
     public string LayerType => "marble";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["veins", "frequency", "turbulence", "warp_strength", "scale", "octaves", "sharpness", "angle", "rotation", "phase", "color"];
+        ["veins", "frequency", "turbulence", "warp_strength", "scale", "octaves", "sharpness", "angle", "rotation", "phase", "color", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -111,6 +112,7 @@ public sealed class MarbleLayerRenderer : ILayerRenderer
         var sharpness = Math.Max(0.1, BricksLayerRenderer.ResolveDouble(context, "sharpness", null, defaultValue: 1.5));
         var angleDeg = BricksLayerRenderer.ResolveDouble(context, "angle", "rotation", defaultValue: 25.0);
         var phase = BricksLayerRenderer.ResolveDouble(context, "phase", null, defaultValue: 0.0);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         var ramp = DefaultMarbleRamp;
         if (context.LayerProperties.TryGetProperty("color", out var colVal) && colVal is GfxColorRamp cr)
@@ -132,12 +134,12 @@ public sealed class MarbleLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var ny = y * invH;
+            var ny = (y - offsetY) * invH;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var nx = x * invW;
+                var nx = (x - offsetX) * invW;
                 var proj = (nx * cosA) + (ny * sinA);
                 var turb = fbm.Sample3D(nx * scale, ny * scale, phase);
                 var rawWave = 0.5 + (0.5 * Math.Sin(((proj * veins) + (turb * turbulence)) * Math.PI));
@@ -166,7 +168,7 @@ public sealed class CausticsLayerRenderer : ILayerRenderer
     public string LayerType => "caustics";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["scale", "frequency", "sharpness", "phase", "color"];
+        ["scale", "frequency", "sharpness", "phase", "color", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -176,6 +178,7 @@ public sealed class CausticsLayerRenderer : ILayerRenderer
         var scale = Math.Max(0.5, BricksLayerRenderer.ResolveDouble(context, "scale", "frequency", defaultValue: 4.0));
         var sharpness = Math.Max(0.5, BricksLayerRenderer.ResolveDouble(context, "sharpness", null, defaultValue: 2.5));
         var phase = BricksLayerRenderer.ResolveDouble(context, "phase", null, defaultValue: 0.0);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         var ramp = DefaultCausticsRamp;
         if (context.LayerProperties.TryGetProperty("color", out var colVal) && colVal is GfxColorRamp cr)
@@ -196,12 +199,12 @@ public sealed class CausticsLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var ny = y * invH;
+            var ny = (y - offsetY) * invH;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var nx = x * invW;
+                var nx = (x - offsetX) * invW;
                 var wx = warpNoise.Sample3D(nx * 0.8, ny * 0.8, phase) * 0.35;
                 var wy = warpNoise.Sample3D((nx * 0.8) + 5.2, (ny * 0.8) + 1.3, phase) * 0.35;
 
@@ -238,7 +241,7 @@ public sealed class FlowFieldLayerRenderer(string layerType = "flow_field") : IL
     public string LayerType { get; } = layerType;
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["scale", "octaves", "steps", "iterations", "step_size", "strength", "phase", "color"];
+        ["scale", "octaves", "steps", "iterations", "step_size", "strength", "phase", "color", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -250,6 +253,7 @@ public sealed class FlowFieldLayerRenderer(string layerType = "flow_field") : IL
         var steps = Math.Clamp((int)BricksLayerRenderer.ResolveDouble(context, "steps", "iterations", defaultValue: 6.0), 1, 32);
         var stepSize = BricksLayerRenderer.ResolveDouble(context, "step_size", "strength", defaultValue: 0.12);
         var phase = BricksLayerRenderer.ResolveDouble(context, "phase", null, defaultValue: 0.0);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         var ramp = DefaultFlowRamp;
         if (context.LayerProperties.TryGetProperty("color", out var colVal) && colVal is GfxColorRamp cr)
@@ -272,12 +276,12 @@ public sealed class FlowFieldLayerRenderer(string layerType = "flow_field") : IL
 
         for (var y = 0; y < height; y++)
         {
-            var baseY = y * invH;
+            var baseY = (y - offsetY) * invH;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var px = x * invW;
+                var px = (x - offsetX) * invW;
                 var py = baseY;
 
                 // Advect (px, py) along the 2D curl vector (dPsi/dy, -dPsi/dx)

@@ -29,7 +29,7 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
     public string EffectType { get; } = effectType;
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["sksl", "fn", "shader", "pixel_fn", "function", "callback", "script", "path", "source", "color", "params", "uniforms"];
+        ["sksl", "fn", "shader", "pixel_fn", "function", "callback", "code", "script", "path", "source", "color", "params", "uniforms"];
 
     public void Apply(SKBitmap target, EffectContext context)
     {
@@ -258,6 +258,13 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
             return SampleNormalizedBitmapToJsObject(engine, sampleSource, su, sv, wrap);
         });
 
+        var canvasSource = context.CanvasBitmap ?? sampleSource;
+        var sampleCanvasFn = (Func<double, double, JsValue, ObjectInstance>)((su, sv, wrapVal) =>
+        {
+            var wrap = wrapVal is not null && wrapVal.IsBoolean() && wrapVal.AsBoolean();
+            return SampleNormalizedBitmapToJsObject(engine, canvasSource, su, sv, wrap);
+        });
+
         var sampleLayerFn = (Func<string, double, double, JsValue, ObjectInstance>)((layerName, su, sv, wrapVal) =>
         {
             var wrap = wrapVal is not null && wrapVal.IsBoolean() && wrapVal.AsBoolean();
@@ -276,6 +283,7 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
         engine.SetValue("voronoi", voronoiFn);
         engine.SetValue("hash", hashFn);
         engine.SetValue("sample", sampleFn);
+        engine.SetValue("sampleCanvas", sampleCanvasFn);
         engine.SetValue("sampleLayer", sampleLayerFn);
 
         var paramsJs = ResolveShaderParamsJs(engine, context);
@@ -298,6 +306,7 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
         ctxObj.Set("voronoi", engine.GetValue("voronoi"));
         ctxObj.Set("hash", engine.GetValue("hash"));
         ctxObj.Set("sample", engine.GetValue("sample"));
+        ctxObj.Set("sampleCanvas", engine.GetValue("sampleCanvas"));
         ctxObj.Set("sampleLayer", engine.GetValue("sampleLayer"));
         ctxObj.Set("run", JsValue.FromObject(engine, new Dictionary<string, object>
         {
@@ -441,12 +450,17 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
         string skslSource,
         EffectContext context)
     {
-        // 1. Validate SkSL syntax and types using Skia's native SkSL compiler
-        using var effect = SKRuntimeEffect.Create(skslSource, out var errorText);
-        if (effect is null)
+        // 1. Validate SkSL syntax and types using Skia's native SkSL compiler (unless using custom GfxStudio sampleLayer/sampleCanvas intrinsics)
+        var usesCustomSamplingIntrinsics = skslSource.Contains("sampleCanvas", StringComparison.Ordinal)
+            || skslSource.Contains("sampleLayer", StringComparison.Ordinal);
+        if (!usesCustomSamplingIntrinsics)
         {
-            context.AddDiagnostic("SHD004", $"SkSL compilation failed on layer '{context.LayerId}': {errorText}");
-            return;
+            using var effect = SKRuntimeEffect.Create(skslSource, out var errorText);
+            if (effect is null)
+            {
+                context.AddDiagnostic("SHD004", $"SkSL compilation failed on layer '{context.LayerId}': {errorText}");
+                return;
+            }
         }
 
         // 2. Transpile validated SkSL to our deterministic JS shader runtime (avoiding Skia 2.88 SkVM JIT AVX illegal instruction crash)
@@ -509,6 +523,8 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
         body = System.Text.RegularExpressions.Regex.Replace(body, @"\b(?:float2|half2|vec2)\s*\(", "__vec2(");
         body = System.Text.RegularExpressions.Regex.Replace(body, @"\b(?:float3|half3|vec3)\s*\(", "__vec3(");
         body = System.Text.RegularExpressions.Regex.Replace(body, @"\b(?:float4|half4|vec4)\s*\(", "__vec4(");
+        body = System.Text.RegularExpressions.Regex.Replace(body, @"\bsampleCanvas\s*\(", "__sksl_sampleCanvas(");
+        body = System.Text.RegularExpressions.Regex.Replace(body, @"\bsampleLayer\s*\(", "__sksl_sampleLayer(");
 
         const string preamble = """
             function __vec2(x, y) {
@@ -530,6 +546,18 @@ public sealed class PixelShaderEffect(string effectType = "shader") : ILayerEffe
                 a.x = r; a.y = g; a.z = b; a.w = w;
                 a.r = r; a.g = g; a.b = b; a.a = w;
                 return a;
+            }
+            function __sksl_sampleCanvas(a, b, c) {
+                let su = a, sv = b, wrap = c;
+                if (Array.isArray(a)) { su = a[0]; sv = a[1]; wrap = b; }
+                const col = sampleCanvas(su, sv, !!wrap);
+                return __vec4(col.r, col.g, col.b, col.a);
+            }
+            function __sksl_sampleLayer(name, a, b, c) {
+                let su = a, sv = b, wrap = c;
+                if (Array.isArray(a)) { su = a[0]; sv = a[1]; wrap = b; }
+                const col = sampleLayer(name, su, sv, !!wrap);
+                return __vec4(col.r, col.g, col.b, col.a);
             }
             """;
 

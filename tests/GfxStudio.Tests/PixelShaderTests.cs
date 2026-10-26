@@ -1,3 +1,4 @@
+using FluentAssertions;
 using GfxStudio.Core.Rendering;
 using SkiaSharp;
 
@@ -254,5 +255,116 @@ public sealed class PixelShaderTests
         Assert.NotNull(result.Bitmap);
         Assert.Equal(192, result.Bitmap!.Width);
         Assert.Equal(192, result.Bitmap!.Height);
+    }
+
+    [Fact]
+    public void SampleLayerAndSampleCanvas_SamplePixelsAndNormalizedCoordinatesInGfxExpressions()
+    {
+        const string source = """
+            layers = {
+              palette_src = {
+                type = stripes
+                stripe_width = 8
+                angle = 0
+                color1 = rgb(200, 40, 60)
+                color2 = rgb(40, 180, 220)
+                visible = false
+              }
+              bg = {
+                type = fill
+                color = sample_layer("palette_src", 2, 2)
+              }
+              top_half = {
+                type = rect
+                size = { width = 16, height = 8 }
+                offset = { x = 0, y = 0 }
+                color = sample_layer("palette_src", 0.75, 0.5, true)
+              }
+              indicator = {
+                type = rect
+                size = { width = 4, height = 4 }
+                offset = { x = 12, y = 12 }
+                color = sample_canvas(2, 2)
+              }
+            }
+            output = { dimensions = { width = 16, height = 16 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+
+        var bmp = result.Bitmap!;
+        // Bottom half (from bg, which sampled x=2 of palette_src -> color1 = rgb(200, 40, 60))
+        bmp.GetPixel(4, 12).Should().Be(new SKColor(200, 40, 60, 255));
+        // Top half (sampled u=0.75 -> x=12 of palette_src -> color2 = rgb(40, 180, 220))
+        bmp.GetPixel(4, 2).Should().Be(new SKColor(40, 180, 220, 255));
+        // Indicator at (12..15, 12..15) sampled canvas at (2, 2) where top_half had been composited -> color2
+        bmp.GetPixel(14, 14).Should().Be(new SKColor(40, 180, 220, 255));
+    }
+
+    [Fact]
+    public void SampleLayer_ReportsRND056OnUnknownOrCircularLayerReference()
+    {
+        const string unknownSource = """
+            layers = {
+              bg = {
+                type = fill
+                color = sample_layer("missing_layer", 0, 0)
+              }
+            }
+            output = { dimensions = { width = 8, height = 8 } }
+            """;
+
+        using var r1 = new GfxCanvasCompositor().RenderSource(unknownSource);
+        r1.Diagnostics.Should().Contain(d => d.Code == "RND056" && d.Message.Contains("missing_layer"));
+
+        const string selfRefSource = """
+            layers = {
+              self_layer = {
+                type = fill
+                color = sample_layer("self_layer", 0, 0)
+              }
+            }
+            output = { dimensions = { width = 8, height = 8 } }
+            """;
+
+        using var r2 = new GfxCanvasCompositor().RenderSource(selfRefSource);
+        r2.Diagnostics.Should().Contain(d => d.Code == "RND056" && d.Message.Contains("self_layer"));
+    }
+
+    [Fact]
+    public void PixelShader_SupportsSampleCanvasInJavaScriptAndSkslShaders()
+    {
+        const string source = """
+            output = { dimensions = { width = 16, height = 16 } }
+            layers = {
+              bg = {
+                type = fill
+                color = rgb(100, 150, 200)
+              }
+              js_invert_top = {
+                type = rect
+                size = { width = 8, height = 16 }
+                offset = { x = 0, y = 0 }
+                color = rgb(0, 0, 0)
+                shader = "(u, v, ctx) => { const c = ctx.sampleCanvas(u, v); return [1.0 - c.r, 1.0 - c.g, 1.0 - c.b, 1.0]; }"
+              }
+              sksl_swap_right = {
+                type = shader
+                size = { width = 8, height = 16 }
+                offset = { x = 8, y = 0 }
+                sksl = "uniform float2 u_resolution; half4 main(float2 p) { float2 uv = p / u_resolution; half4 c = sampleCanvas(uv); return half4(c.b, c.g, c.r, 1.0); }"
+              }
+            }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+
+        var bmp = result.Bitmap!;
+        // Left half (JS shader inverted bg(100, 150, 200) -> (155, 105, 55))
+        bmp.GetPixel(2, 8).Should().Be(new SKColor(155, 105, 55, 255));
+        // Right half (SkSL shader swapped R and B of bg(100, 150, 200) -> (200, 150, 100))
+        bmp.GetPixel(12, 8).Should().Be(new SKColor(200, 150, 100, 255));
     }
 }

@@ -14,7 +14,7 @@ public sealed class TruchetLayerRenderer : ILayerRenderer
     public string LayerType => "truchet";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["cell_size", "tile_size", "style", "pattern", "line_width", "width", "color", "background"];
+        ["cell_size", "tile_size", "style", "pattern", "line_width", "width", "color", "background", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -25,6 +25,7 @@ public sealed class TruchetLayerRenderer : ILayerRenderer
         var cellSize = Math.Max(4.0, Math.Min(cellW, cellH));
         var style = BricksLayerRenderer.ResolveString(context, "style", "pattern", defaultValue: "arcs").ToLowerInvariant();
         var lineWidth = Math.Max(0.5, BricksLayerRenderer.ResolveDouble(context, "line_width", "width", defaultValue: Math.Max(2.0, cellSize * 0.15)));
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
         var fgColor = CheckerboardLayerRenderer.ResolveColor(context, "color", ColorRgba.White);
         var bgColor = CheckerboardLayerRenderer.ResolveColor(context, "background", new ColorRgba(0, 0, 0, 255));
         var layerSeed = unchecked((ulong)(context.Random.NextDouble() * ulong.MaxValue));
@@ -37,14 +38,16 @@ public sealed class TruchetLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var cy = (int)Math.Floor(y / cellSize);
-            var ly = (y + 0.5) - (cy * cellSize);
+            var sy = y - offsetY;
+            var cy = (int)Math.Floor(sy / cellSize);
+            var ly = (sy + 0.5) - (cy * cellSize);
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var cx = (int)Math.Floor(x / cellSize);
-                var lx = (x + 0.5) - (cx * cellSize);
+                var sx = x - offsetX;
+                var cx = (int)Math.Floor(sx / cellSize);
+                var lx = (sx + 0.5) - (cx * cellSize);
 
                 var hash = SeedMixer.Mix(layerSeed ^ unchecked((ulong)cx * 0x9E3779B97F4A7C15UL) ^ unchecked((ulong)cy * 0xBF58476D1CE4E5B9UL));
                 var flip = (hash & 1UL) != 0;

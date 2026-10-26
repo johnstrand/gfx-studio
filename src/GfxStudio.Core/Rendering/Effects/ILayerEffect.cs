@@ -18,7 +18,8 @@ public sealed class EffectContext
         IGfxRandom? random = null,
         Func<string, SKBitmap?>? resolveLayerBitmap = null,
         EvaluationContext? evaluationContext = null,
-        SKBitmap? sampleSource = null)
+        SKBitmap? sampleSource = null,
+        SKBitmap? canvasBitmap = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(layerId);
         ArgumentNullException.ThrowIfNull(properties);
@@ -33,6 +34,7 @@ public sealed class EffectContext
         ResolveLayerBitmap = resolveLayerBitmap;
         EvaluationContext = evaluationContext;
         SampleSource = sampleSource;
+        CanvasBitmap = canvasBitmap ?? sampleSource;
     }
 
     public string LayerId { get; }
@@ -49,6 +51,8 @@ public sealed class EffectContext
 
     public SKBitmap? SampleSource { get; }
 
+    public SKBitmap? CanvasBitmap { get; }
+
     public IReadOnlyList<GfxDiagnostic> Diagnostics => _diagnostics;
 
     public void AddDiagnostic(string code, string message)
@@ -62,7 +66,16 @@ public interface ILayerEffect
 {
     string EffectType { get; }
 
+    string Category => LayerMetadataCatalog.GetEffectCategory(EffectType);
+
+    string Description => LayerMetadataCatalog.GetEffectDescription(EffectType);
+
+    string ExampleGfx => LayerMetadataCatalog.GetEffectExample(EffectType);
+
     IReadOnlyCollection<string> SupportedProperties => [];
+
+    IReadOnlyList<LayerPropertyDescriptor> PropertyDescriptors =>
+        LayerMetadataCatalog.GetEffectPropertyDescriptors(EffectType, SupportedProperties);
 
     void Apply(SKBitmap target, EffectContext context);
 }
@@ -73,6 +86,9 @@ public sealed class LayerEffectRegistry
     private readonly Dictionary<string, ILayerEffect> _effects = new(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyDictionary<string, ILayerEffect> Effects => _effects;
+
+    public IReadOnlyList<string> RegisteredEffectNames =>
+        _effects.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToArray();
 
     public static LayerEffectRegistry CreateDefault()
     {
@@ -132,6 +148,9 @@ public sealed class LayerEffectRegistry
 
     public bool TryGetEffect(string effectType, out ILayerEffect effect) =>
         _effects.TryGetValue(effectType, out effect!);
+
+    public bool TryGet(string effectType, out ILayerEffect effect) =>
+        _effects.TryGetValue(effectType, out effect!);
 }
 
 /// <summary>
@@ -149,7 +168,15 @@ public sealed class EffectAdjustmentLayerRenderer : ILayerRenderer
 
     public string LayerType => _effect.EffectType;
 
+    public string Category => _effect.Category;
+
+    public string Description => _effect.Description;
+
+    public string ExampleGfx => _effect.ExampleGfx;
+
     public IReadOnlyCollection<string> SupportedProperties => _effect.SupportedProperties;
+
+    public IReadOnlyList<LayerPropertyDescriptor> PropertyDescriptors => _effect.PropertyDescriptors;
 
     public ILayerEffect Effect => _effect;
 

@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using GfxStudio.Core.Evaluation;
 using GfxStudio.Core.Noise;
 using GfxStudio.Core.Primitives;
+using GfxStudio.Core.Rendering.Layers.Patterns;
 using SkiaSharp;
 
 namespace GfxStudio.Core.Rendering.Layers;
@@ -41,7 +42,9 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
         "z",
         "loop_seamless",
         "warp_strength",
-        "warp_scale"
+        "warp_scale",
+        "pattern_offset",
+        "phase_offset"
     ];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
@@ -63,6 +66,7 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
         var loopSeamless = ResolveBool(context, "loop_seamless", defaultValue: false);
         var warpStrength = ResolveDouble(context, "warp_strength", null, defaultValue: 0.0);
         var warpScale = ResolvePositiveDouble(context, "warp_scale", null, defaultValue: scale);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         var noise = new PerlinNoise(context.Random);
         var fbm = new FractalBrownianMotion(noise, octaves, persistence, lacunarity);
@@ -85,18 +89,20 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var baseNy = y * invHeight;
-            var wy = y * invWarpH;
+            var sy = y - offsetY;
+            var baseNy = sy * invHeight;
+            var wy = sy * invWarpH;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var nx = x * invWidth;
+                var sx = x - offsetX;
+                var nx = sx * invWidth;
                 var ny = baseNy;
 
                 if (warpNoiseX is not null && warpNoiseY is not null)
                 {
-                    var wx = x * invWarpW;
+                    var wx = sx * invWarpW;
                     nx += warpStrength * warpNoiseX.Sample3D(wx, wy, phase);
                     ny += warpStrength * warpNoiseY.Sample3D(wx, wy, phase);
                 }

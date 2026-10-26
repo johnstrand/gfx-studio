@@ -13,7 +13,7 @@ public sealed class CheckerboardLayerRenderer : ILayerRenderer
     public string LayerType => "checkerboard";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["tile_size", "cell_size", "color1", "color2", "color", "background"];
+        ["tile_size", "cell_size", "color1", "color2", "color", "background", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -21,8 +21,20 @@ public sealed class CheckerboardLayerRenderer : ILayerRenderer
 
         var bitmap = context.CreateLayerBitmap();
         var (tileWidth, tileHeight) = ResolveTileSize(context, "tile_size", "cell_size", defaultSize: 8);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
         var color1 = ResolveColor(context, "color1", ColorRgba.White);
+        if (!context.LayerProperties.Properties.ContainsKey("color1")
+            && context.LayerProperties.Properties.ContainsKey("color"))
+        {
+            color1 = ResolveColor(context, "color", ColorRgba.White);
+        }
+
         var color2 = ResolveColor(context, "color2", ColorRgba.Black);
+        if (!context.LayerProperties.Properties.ContainsKey("color2")
+            && context.LayerProperties.Properties.ContainsKey("background"))
+        {
+            color2 = ResolveColor(context, "background", ColorRgba.Black);
+        }
 
         var width = bitmap.Width;
         var height = bitmap.Height;
@@ -30,11 +42,11 @@ public sealed class CheckerboardLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var ty = y / tileHeight;
+            var ty = (int)Math.Floor((y - offsetY) / tileHeight);
             var rowOffset = y * width * 4;
             for (var x = 0; x < width; x++)
             {
-                var tx = x / tileWidth;
+                var tx = (int)Math.Floor((x - offsetX) / tileWidth);
                 var chosen = ((tx + ty) & 1) == 0 ? color1 : color2;
                 WorleyLayerRenderer.WritePremulPixel(pixelBuffer, rowOffset + (x * 4), chosen);
             }

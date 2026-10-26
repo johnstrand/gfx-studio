@@ -26,7 +26,9 @@ public sealed class GeometricTilingLayerRenderer(string layerType = "tiling", st
         "color",
         "fill_color",
         "color_variation",
-        "variation"
+        "variation",
+        "pattern_offset",
+        "phase_offset"
     ];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
@@ -37,6 +39,7 @@ public sealed class GeometricTilingLayerRenderer(string layerType = "tiling", st
         var style = BricksLayerRenderer.ResolveString(context, "style", "pattern", defaultValue: defaultStyle).ToLowerInvariant();
         var cellSize = Math.Max(4.0, BricksLayerRenderer.ResolveDouble(context, "cell_size", "size", defaultValue: 20.0));
         var lineWidth = Math.Max(0.0, BricksLayerRenderer.ResolveDouble(context, "line_width", "stroke_width", defaultValue: 1.5));
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
         var strokeColor = CheckerboardLayerRenderer.ResolveColor(context, "stroke_color", new ColorRgba(20, 24, 33, 255));
         var baseFillColor = new ColorRgba(70, 130, 180, 255);
         ColorRamp? colorRamp = null;
@@ -63,11 +66,11 @@ public sealed class GeometricTilingLayerRenderer(string layerType = "tiling", st
 
         for (var y = 0; y < height; y++)
         {
+            var py = (y - offsetY) + 0.5;
             var rowOffset = y * width * 4;
             for (var x = 0; x < width; x++)
             {
-                var px = x + 0.5;
-                var py = y + 0.5;
+                var px = (x - offsetX) + 0.5;
 
                 int cellIdX, cellIdY;
                 double edgeDist;
@@ -182,7 +185,6 @@ public sealed class GeometricTilingLayerRenderer(string layerType = "tiling", st
         if (!isUpper)
         {
             d1 = ly;
-            d2 = ((tX + tY) * h * 0.5) * Math.Sqrt(3.0);
             d3 = ((1.0 - tX - tY) * side) * (Math.Sqrt(3.0) * 0.5);
             d2 = ((lx * Math.Sqrt(3.0)) + ly) * 0.5;
         }

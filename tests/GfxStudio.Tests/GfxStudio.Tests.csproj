@@ -17,4 +17,7 @@
     <ProjectReference Include="..\..\src\GfxStudio.Core\GfxStudio.Core.csproj" />
     <ProjectReference Include="..\..\src\GfxStudio.Cli\GfxStudio.Cli.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\..\src\GfxStudio.Editor\GfxEditorTextHelper.cs" Link="Editor\GfxEditorTextHelper.cs" />
+  </ItemGroup>
 </Project>

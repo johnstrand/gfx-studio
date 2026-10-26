@@ -259,6 +259,214 @@ public sealed class ImageAndTransformTests
         }
     }
 
+    [Fact]
+    public void TransformBlock_SupportsOffsetRotationScaleShearFlipAnchorWrapAndResample()
+    {
+        const string source = """
+            layers = {
+              bg = { type = fill, color = NAMED_COLORS.BLACK }
+              box = {
+                type = rect
+                size = { width = 4, height = 4 }
+                color = NAMED_COLORS.RED
+                transform = {
+                  offset = { x = 2, y = 3 }
+                  scale = { x = 2.0, y = 1.0 }
+                  anchor = { x = 0, y = 0 }
+                  resample = nearest
+                }
+              }
+            }
+            output = { dimensions = { width = 16, height = 16 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+
+        var bmp = result.Bitmap!;
+        bmp.GetPixel(1, 3).Should().Be(new SKColor(0, 0, 0, 255));
+        bmp.GetPixel(2, 3).Should().Be(new SKColor(255, 0, 0, 255));
+        bmp.GetPixel(3, 5).Should().Be(new SKColor(255, 0, 0, 255));
+    }
+
+    [Fact]
+    public void TransformBlock_DisambiguatesTransformScaleOnNoiseLayerAndTransformOffsetOnEffectLayer()
+    {
+        const string source = """
+            layers = {
+              clouds = {
+                type = fractal_clouds
+                scale = 0.08
+                transform = {
+                  scale = 2.0
+                  rotation = 45
+                }
+              }
+              shadow = {
+                type = drop_shadow
+                offset = { x = 2, y = 2 }
+                radius = 2
+                transform = {
+                  offset = { x = 0, y = 0 }
+                }
+              }
+            }
+            output = { dimensions = { width = 16, height = 16 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source, masterSeed: 42);
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+        result.Diagnostics.Should().BeEmpty();
+        result.Bitmap.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void TransformBlock_ReportsRND050WithDidYouMeanSuggestionOnUnknownProperty()
+    {
+        const string source = """
+            layers = {
+              box = {
+                type = rect
+                size = { width = 8, height = 8 }
+                color = NAMED_COLORS.RED
+                transform = {
+                  rotaton = 45
+                }
+              }
+            }
+            output = { dimensions = { width = 16, height = 16 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source);
+        result.Diagnostics.Should().ContainSingle(d =>
+            d.Code == "RND050" &&
+            d.Message.Contains("rotaton") &&
+            d.Message.Contains("rotation"));
+    }
+
+    [Fact]
+    public void LayerMetadataCatalog_ProvidesPropertyDescriptorsAndCategoryForAllRegisteredLayersAndEffects()
+    {
+        var layerRegistry = LayerRendererRegistry.CreateDefault();
+        foreach (var layerType in layerRegistry.RegisteredLayerTypes)
+        {
+            layerRegistry.TryGet(layerType, out var renderer).Should().BeTrue();
+            renderer!.Category.Should().NotBeNullOrWhiteSpace($"layer '{layerType}' must have a category");
+            renderer.Description.Should().NotBeNullOrWhiteSpace($"layer '{layerType}' must have a description");
+            renderer.ExampleGfx.Should().NotBeNullOrWhiteSpace($"layer '{layerType}' must have an example");
+            if (layerType != "empty")
+            {
+                renderer.PropertyDescriptors.Should().NotBeEmpty($"layer '{layerType}' must expose property descriptors");
+            }
+        }
+
+        GfxCanvasCompositor.UniversalPropertyDescriptors.Should().NotBeEmpty();
+        GfxCanvasCompositor.TransformPropertyDescriptors.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void PatternOffset_ShiftsPeriodicPatternsByFullPeriodIdenticallyToZeroOffset()
+    {
+        const string zeroOffsetSource = """
+            layers = {
+              s = {
+                type = stripes
+                stripe_width = 4
+                angle = 0
+                color1 = NAMED_COLORS.RED
+                color2 = NAMED_COLORS.BLUE
+                pattern_offset = { x = 0, y = 0 }
+              }
+              c = {
+                type = checkerboard
+                cell_size = 4
+                color1 = NAMED_COLORS.WHITE
+                color2 = NAMED_COLORS.BLACK
+                pattern_offset = { x = 0, y = 0 }
+                opacity = 0.5
+              }
+              g = {
+                type = grid
+                spacing = 4
+                line_width = 1
+                pattern_offset = { x = 0, y = 0 }
+                opacity = 0.5
+              }
+            }
+            output = { dimensions = { width = 16, height = 16 } }
+            """;
+
+        const string fullPeriodOffsetSource = """
+            layers = {
+              s = {
+                type = stripes
+                stripe_width = 4
+                angle = 0
+                color1 = NAMED_COLORS.RED
+                color2 = NAMED_COLORS.BLUE
+                pattern_offset = { x = 8, y = 0 }
+              }
+              c = {
+                type = checkerboard
+                cell_size = 4
+                color1 = NAMED_COLORS.WHITE
+                color2 = NAMED_COLORS.BLACK
+                phase_offset = { x = -8, y = 8 }
+                opacity = 0.5
+              }
+              g = {
+                type = grid
+                spacing = 4
+                line_width = 1
+                pattern_offset = { x = -4, y = 4 }
+                opacity = 0.5
+              }
+            }
+            output = { dimensions = { width = 16, height = 16 } }
+            """;
+
+        var compositor = new GfxCanvasCompositor();
+        using var r0 = compositor.RenderSource(zeroOffsetSource, masterSeed: 7);
+        using var r1 = compositor.RenderSource(fullPeriodOffsetSource, masterSeed: 7);
+
+        r0.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, r0.Diagnostics));
+        r1.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, r1.Diagnostics));
+
+        for (var y = 0; y < 16; y++)
+        {
+            for (var x = 0; x < 16; x++)
+            {
+                r1.Bitmap!.GetPixel(x, y).Should().Be(r0.Bitmap!.GetPixel(x, y), $"pixel ({x},{y}) should match after full-period shift");
+            }
+        }
+    }
+
+    [Fact]
+    public void PatternOffset_WorksAcrossAllProceduralAndPatternLayerTypesWithoutDiagnostics()
+    {
+        const string source = """
+            layers = {
+              l1 = { type = stripes, stripe_width = 4, phase = 2 }
+              l2 = { type = dots, spacing = 8, pattern_offset = { x = 2, y = -3 } }
+              l3 = { type = bricks, brick_width = 8, brick_height = 4, pattern_offset = { x = -4, y = 2 } }
+              l4 = { type = truchet, cell_size = 8, phase_offset = { x = 4, y = 4 } }
+              l5 = { type = tiling, cell_size = 8, pattern_offset = { x = 3, y = 5 } }
+              l6 = { type = waves, wavelength = 8, pattern_offset = { x = 2, y = 1 } }
+              l7 = { type = fractal_clouds, scale = 0.1, pattern_offset = { x = 10, y = -10 } }
+              l8 = { type = worley, cell_size = 8, phase_offset = { x = 5, y = 5 } }
+              l9 = { type = wood, rings = 6, pattern_offset = { x = 4, y = 4 } }
+              l10 = { type = marble, frequency = 0.1, pattern_offset = { x = -6, y = 3 } }
+              l11 = { type = caustics, scale = 4, pattern_offset = { x = 4, y = -4 } }
+              l12 = { type = flow_field, scale = 0.05, pattern_offset = { x = 8, y = 8 } }
+            }
+            output = { dimensions = { width = 16, height = 16 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source, masterSeed: 123);
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+        result.Diagnostics.Should().BeEmpty();
+    }
+
     private static string CreateTemporaryDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "gfxstudio-image-tests", Guid.NewGuid().ToString("N"));

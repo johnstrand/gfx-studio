@@ -78,4 +78,7 @@ public sealed class LayerRendererRegistry
 
     public bool TryGetRenderer(string layerType, out ILayerRenderer renderer) =>
         _renderers.TryGetValue(layerType, out renderer!);
+
+    public bool TryGet(string layerType, out ILayerRenderer renderer) =>
+        _renderers.TryGetValue(layerType, out renderer!);
 }

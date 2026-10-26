@@ -16,6 +16,8 @@ internal static class StandardFunctions
         registry.Register(Fixed("hsla", 4, Hsla));
         registry.Register(Fixed("hex", 1, Hex));
         registry.Register(Variadic("color_ramp", 2, ColorRamp));
+        registry.Register(new BuiltInFunction("sample_layer", 3, 4, SampleLayer));
+        registry.Register(new BuiltInFunction("sample_canvas", 2, 3, SampleCanvas));
 
         registry.Register(Variadic("random", 0, Random));
         registry.Register(Variadic("random_frame", 0, RandomFrame));
@@ -167,6 +169,103 @@ internal static class StandardFunctions
         {
             throw InvalidValue(exception.Message, span);
         }
+    }
+
+    private static GfxValue SampleLayer(IReadOnlyList<GfxValue> args, EvaluationContext context, SourceSpan span)
+    {
+        var layerId = args[0] switch
+        {
+            GfxString str => str.Value,
+            GfxSymbol sym => sym.Identifier,
+            _ => throw TypeError("sample_layer", 1, "a layer name string or identifier", args[0], span)
+        };
+
+        if (string.IsNullOrWhiteSpace(layerId))
+        {
+            throw InvalidValue("sample_layer requires a non-empty layer name.", span);
+        }
+
+        var x = Number(args, 1, "sample_layer", span);
+        var y = Number(args, 2, "sample_layer", span);
+        var normalized = false;
+        if (args.Count == 4)
+        {
+            if (args[3] is not GfxBoolean b)
+            {
+                throw TypeError("sample_layer", 4, "a boolean", args[3], span);
+            }
+
+            normalized = b.Value;
+        }
+
+        if (context.ResolveLayerBitmap is null)
+        {
+            throw InvalidValue($"sample_layer('{layerId}') cannot be called outside a canvas rendering pass.", span);
+        }
+
+        var bitmap = context.ResolveLayerBitmap(layerId, span);
+        if (bitmap is null)
+        {
+            throw new GfxException(new GfxDiagnostic(
+                "RND056",
+                $"Cannot sample layer '{layerId}': layer does not exist or introduces a circular reference.",
+                span,
+                DiagnosticSeverity.Error));
+        }
+
+        return SampleBitmapColor(bitmap, x, y, normalized);
+    }
+
+    private static GfxValue SampleCanvas(IReadOnlyList<GfxValue> args, EvaluationContext context, SourceSpan span)
+    {
+        var x = Number(args, 0, "sample_canvas", span);
+        var y = Number(args, 1, "sample_canvas", span);
+        var normalized = false;
+        if (args.Count == 3)
+        {
+            if (args[2] is not GfxBoolean b)
+            {
+                throw TypeError("sample_canvas", 3, "a boolean", args[2], span);
+            }
+
+            normalized = b.Value;
+        }
+
+        if (context.ResolveCanvasBitmap is null)
+        {
+            return new GfxColor(new ColorRgba(0, 0, 0, 0));
+        }
+
+        var bitmap = context.ResolveCanvasBitmap(context.CurrentLayerId, span);
+        if (bitmap is null)
+        {
+            return new GfxColor(new ColorRgba(0, 0, 0, 0));
+        }
+
+        return SampleBitmapColor(bitmap, x, y, normalized);
+    }
+
+    private static GfxColor SampleBitmapColor(SkiaSharp.SKBitmap bitmap, double x, double y, bool normalized)
+    {
+        if (bitmap.Width <= 0 || bitmap.Height <= 0)
+        {
+            return new GfxColor(new ColorRgba(0, 0, 0, 0));
+        }
+
+        int px;
+        int py;
+        if (normalized)
+        {
+            px = (int)Math.Round(Math.Clamp(x, 0.0, 1.0) * (bitmap.Width - 1));
+            py = (int)Math.Round(Math.Clamp(y, 0.0, 1.0) * (bitmap.Height - 1));
+        }
+        else
+        {
+            px = Math.Clamp((int)Math.Round(x), 0, bitmap.Width - 1);
+            py = Math.Clamp((int)Math.Round(y), 0, bitmap.Height - 1);
+        }
+
+        return new GfxColor(ColorRgba.FromSKColor(bitmap.GetPixel(px, py)));
     }
 
     private static GfxValue Random(IReadOnlyList<GfxValue> args, EvaluationContext context, SourceSpan span) =>
@@ -408,7 +507,12 @@ internal static class StandardFunctions
             {
                 var expected = minArity == maxArity
                     ? minArity.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                    : $"at least {minArity}";
+                    : $"{minArity} to {maxArity}";
+                if (maxArity == int.MaxValue)
+                {
+                    expected = $"at least {minArity}";
+                }
+
                 throw new GfxException(new GfxDiagnostic(
                     "FUNC001",
                     $"Function '{Name}' expects {expected} argument(s), but received {arguments.Count}.",

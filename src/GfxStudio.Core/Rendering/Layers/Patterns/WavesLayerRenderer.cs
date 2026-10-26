@@ -14,7 +14,7 @@ public sealed class WavesLayerRenderer : ILayerRenderer
     public string LayerType => "waves";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["style", "wave_type", "frequency", "scale", "angle", "rotation", "phase", "sources", "count", "color", "background"];
+        ["style", "wave_type", "frequency", "scale", "wavelength", "angle", "rotation", "phase", "sources", "count", "color", "background", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -23,9 +23,17 @@ public sealed class WavesLayerRenderer : ILayerRenderer
         var bitmap = context.CreateLayerBitmap();
         var style = BricksLayerRenderer.ResolveString(context, "style", "wave_type", defaultValue: "sine").ToLowerInvariant();
         var frequency = Math.Max(0.1, BricksLayerRenderer.ResolveDouble(context, "frequency", "scale", defaultValue: 4.0));
+        if (!context.LayerProperties.Properties.ContainsKey("frequency")
+            && !context.LayerProperties.Properties.ContainsKey("scale")
+            && context.LayerProperties.Properties.ContainsKey("wavelength"))
+        {
+            var wl = Math.Max(1.0, BricksLayerRenderer.ResolveDouble(context, "wavelength", null, defaultValue: 16.0));
+            frequency = Math.Max(0.1, Math.Min(bitmap.Width, bitmap.Height) / wl);
+        }
         var angleDeg = BricksLayerRenderer.ResolveDouble(context, "angle", "rotation", defaultValue: 0.0);
         var phase = BricksLayerRenderer.ResolveDouble(context, "phase", null, defaultValue: 0.0);
         var sourceCount = Math.Clamp((int)BricksLayerRenderer.ResolveDouble(context, "sources", "count", defaultValue: 3.0), 1, 16);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         ColorRamp? ramp = null;
         var fgColor = ColorRgba.White;
@@ -68,14 +76,16 @@ public sealed class WavesLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
-            var ny = (y + 0.5) * invDim;
-            var cy = ((y + 0.5) - (height * 0.5)) * invDim;
+            var sy = y - offsetY;
+            var ny = (sy + 0.5) * invDim;
+            var cy = ((sy + 0.5) - (height * 0.5)) * invDim;
             var rowOffset = y * width * 4;
 
             for (var x = 0; x < width; x++)
             {
-                var nx = (x + 0.5) * invDim;
-                var cx = ((x + 0.5) - (width * 0.5)) * invDim;
+                var sx = x - offsetX;
+                var nx = (sx + 0.5) * invDim;
+                var cx = ((sx + 0.5) - (width * 0.5)) * invDim;
 
                 double t;
                 switch (style)
@@ -92,8 +102,8 @@ public sealed class WavesLayerRenderer : ILayerRenderer
                         var sum = 0.0;
                         for (var i = 0; i < sourceCount; i++)
                         {
-                            var dx = ((x + 0.5) - emitters[i].X) * invDim;
-                            var dy = ((y + 0.5) - emitters[i].Y) * invDim;
+                            var dx = ((sx + 0.5) - emitters[i].X) * invDim;
+                            var dy = ((sy + 0.5) - emitters[i].Y) * invDim;
                             var dist = Math.Sqrt((dx * dx) + (dy * dy));
                             sum += Math.Sin(((dist * frequency) - phase) * Math.Tau);
                         }

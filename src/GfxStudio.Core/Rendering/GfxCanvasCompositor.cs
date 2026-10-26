@@ -41,7 +41,9 @@ public sealed class GfxCanvasCompositor
         "seed",
         "mask",
         "copy",
+        "transform",
         "rotation",
+        "rotate",
         "shear",
         "scale",
         "transform_scale",
@@ -54,6 +56,30 @@ public sealed class GfxCanvasCompositor
         "wrap_mode",
         "effects"
     };
+
+    private static readonly HashSet<string> TransformBlockProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "offset",
+        "position",
+        "rotation",
+        "rotate",
+        "scale",
+        "transform_scale",
+        "shear",
+        "flip_x",
+        "flip_y",
+        "anchor",
+        "pivot",
+        "wrap",
+        "wrap_mode",
+        "resample"
+    };
+
+    public static IReadOnlyList<LayerPropertyDescriptor> UniversalPropertyDescriptors =>
+        LayerMetadataCatalog.UniversalProperties;
+
+    public static IReadOnlyList<LayerPropertyDescriptor> TransformPropertyDescriptors =>
+        LayerMetadataCatalog.TransformProperties;
 
     private readonly LayerRendererRegistry _registry;
     private readonly LayerEffectRegistry _effectRegistry;
@@ -124,12 +150,241 @@ public sealed class GfxCanvasCompositor
 
         context.OutputDimensions = canvasDimensions.Value;
 
+        var canvas = new SKBitmap(new SKImageInfo(
+            canvasDimensions.Value.Width,
+            canvasDimensions.Value.Height,
+            SKColorType.Rgba8888,
+            SKAlphaType.Premul));
+        canvas.Erase(SKColors.Transparent);
+
+        var renderedLayers = new Dictionary<string, (SKBitmap Bitmap, Point2D Offset)>(StringComparer.Ordinal);
+        var compositedLayers = new HashSet<string>(StringComparer.Ordinal);
+        var samplingStack = new HashSet<string>(StringComparer.Ordinal);
+        var declaredLayerOrder = ExtractDeclaredLayerOrder(context.Document);
+        var layerSpans = ExtractLayerSpans(context.Document);
+
+        GfxObject? EvaluateAndMergeLayerProps(string targetLayerId, HashSet<string> copyVisited)
+        {
+            if (!copyVisited.Add(targetLayerId))
+            {
+                return null;
+            }
+
+            var evalRes = evaluator.EvaluatePath($"layers.{targetLayerId}");
+            foreach (var d in evalRes.Diagnostics)
+            {
+                if (!diagnostics.Contains(d))
+                {
+                    diagnostics.Add(d);
+                }
+            }
+
+            if (evalRes.HasErrors || evalRes.Value is not GfxObject ownProps)
+            {
+                return null;
+            }
+
+            if (!ownProps.TryGetProperty("copy", out var copyVal))
+            {
+                return ownProps;
+            }
+
+            var sourceId = copyVal switch
+            {
+                GfxSymbol s => s.Identifier,
+                GfxString str => str.Value,
+                _ => null
+            };
+
+            if (string.IsNullOrWhiteSpace(sourceId))
+            {
+                return null;
+            }
+
+            var baseProps = EvaluateAndMergeLayerProps(sourceId, copyVisited);
+            if (baseProps is null)
+            {
+                return null;
+            }
+
+            var merged = new Dictionary<string, GfxValue>(StringComparer.Ordinal);
+            var ordered = new List<string>();
+            foreach (var k in baseProps.OrderedKeys)
+            {
+                if (baseProps.Properties.TryGetValue(k, out var v))
+                {
+                    merged[k] = v;
+                    ordered.Add(k);
+                }
+            }
+
+            foreach (var k in ownProps.OrderedKeys)
+            {
+                if (string.Equals(k, "copy", StringComparison.OrdinalIgnoreCase)
+                    || !ownProps.Properties.TryGetValue(k, out var v))
+                {
+                    continue;
+                }
+
+                if (!merged.ContainsKey(k))
+                {
+                    ordered.Add(k);
+                }
+
+                merged[k] = v;
+            }
+
+            return new GfxObject(merged, ordered.AsReadOnly());
+        }
+
+        var emptyLayersFallback = new GfxObject(new Dictionary<string, GfxValue>(StringComparer.Ordinal), []);
+
+        context.ResolveLayerBitmap = (targetLayerId, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(targetLayerId)
+                || string.Equals(targetLayerId, context.CurrentLayerId, StringComparison.Ordinal)
+                || !samplingStack.Add(targetLayerId))
+            {
+                return null;
+            }
+
+            try
+            {
+                if (renderedLayers.TryGetValue(targetLayerId, out var existing))
+                {
+                    return existing.Bitmap;
+                }
+
+                if (!declaredLayerOrder.Contains(targetLayerId, StringComparer.Ordinal))
+                {
+                    return null;
+                }
+
+                var props = EvaluateAndMergeLayerProps(targetLayerId, new HashSet<string>(StringComparer.Ordinal));
+                if (props is null)
+                {
+                    return null;
+                }
+
+                return RenderSingleLayerWithTransforms(
+                    targetLayerId,
+                    props,
+                    emptyLayersFallback,
+                    canvas,
+                    canvasDimensions.Value,
+                    context,
+                    effectiveSeedProvider,
+                    layerSpans,
+                    documentSpan,
+                    diagnostics,
+                    renderedLayers,
+                    out Point2D _,
+                    out BlendMode _,
+                    out float _,
+                    out bool _);
+            }
+            finally
+            {
+                samplingStack.Remove(targetLayerId);
+            }
+        };
+
+        context.ResolveCanvasBitmap = (activeLayerId, _) =>
+        {
+            foreach (var prevLayerId in declaredLayerOrder)
+            {
+                if (string.Equals(prevLayerId, activeLayerId, StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                if (compositedLayerIdsContains(compositedLayers, prevLayerId) || samplingStack.Contains(prevLayerId))
+                {
+                    continue;
+                }
+
+                if (!samplingStack.Add(prevLayerId))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var props = EvaluateAndMergeLayerProps(prevLayerId, new HashSet<string>(StringComparer.Ordinal));
+                    if (props is null)
+                    {
+                        compositedLayers.Add(prevLayerId);
+                        continue;
+                    }
+
+                    var prevSpan = layerSpans.GetValueOrDefault(prevLayerId, documentSpan);
+                    if (!IsLayerVisible(props, prevLayerId, prevSpan, diagnostics))
+                    {
+                        compositedLayers.Add(prevLayerId);
+                        continue;
+                    }
+
+                    var bmp = RenderSingleLayerWithTransforms(
+                        prevLayerId,
+                        props,
+                        emptyLayersFallback,
+                        canvas,
+                        canvasDimensions.Value,
+                        context,
+                        effectiveSeedProvider,
+                        layerSpans,
+                        documentSpan,
+                        diagnostics,
+                        renderedLayers,
+                        out var offset,
+                        out var blendMode,
+                        out var opacity,
+                        out var isAdjustment);
+
+                    if (bmp is not null)
+                    {
+                        if (isAdjustment && blendMode == BlendMode.Normal && opacity >= 0.9999f)
+                        {
+                            WriteRegionInPlace(canvas, bmp, offset);
+                        }
+                        else
+                        {
+                            PixelBlender.Composite(canvas, bmp, offset, blendMode, opacity);
+                        }
+                    }
+
+                    compositedLayers.Add(prevLayerId);
+                }
+                finally
+                {
+                    samplingStack.Remove(prevLayerId);
+                }
+            }
+
+            return canvas;
+
+            static bool compositedLayerIdsContains(HashSet<string> set, string id) => set.Contains(id);
+        };
+
         // 2. Evaluate the layers block
         var layersResult = evaluator.EvaluatePath("layers");
-        diagnostics.AddRange(layersResult.Diagnostics);
+        foreach (var d in layersResult.Diagnostics)
+        {
+            if (!diagnostics.Contains(d))
+            {
+                diagnostics.Add(d);
+            }
+        }
+
         if (layersResult.HasErrors || layersResult.Value is null)
         {
-            if (!layersResult.HasErrors)
+            foreach (var (cachedBitmap, _) in renderedLayers.Values)
+            {
+                cachedBitmap.Dispose();
+            }
+
+            canvas.Dispose();
+            if (!layersResult.HasErrors && diagnostics.All(d => d.Severity != DiagnosticSeverity.Error))
             {
                 diagnostics.Add(new GfxDiagnostic("RND001", "Missing required top-level 'layers' block.", documentSpan, DiagnosticSeverity.Error));
             }
@@ -139,11 +394,25 @@ public sealed class GfxCanvasCompositor
 
         if (layersResult.Value is not GfxObject layersObject)
         {
+            foreach (var (cachedBitmap, _) in renderedLayers.Values)
+            {
+                cachedBitmap.Dispose();
+            }
+
+            canvas.Dispose();
             diagnostics.Add(new GfxDiagnostic("RND001", "Top-level 'layers' property must be an object block.", documentSpan, DiagnosticSeverity.Error));
             return new CanvasRenderResult(null, canvasDimensions, diagnostics.AsReadOnly());
         }
 
-        return CompositeLayers(layersObject, canvasDimensions.Value, context, effectiveSeedProvider, diagnostics);
+        return CompositeLayersCore(
+            layersObject,
+            canvasDimensions.Value,
+            context,
+            effectiveSeedProvider,
+            diagnostics,
+            canvas,
+            renderedLayers,
+            compositedLayers);
     }
 
     /// <summary>Composites an already-evaluated <c>layers</c> object onto a canvas of <paramref name="canvasDimensions"/>.</summary>
@@ -159,6 +428,37 @@ public sealed class GfxCanvasCompositor
 
         var diagnostics = existingDiagnostics ?? [];
         var effectiveSeedProvider = seedProvider ?? new DeterministicSeedProvider(context.Run.Seed);
+        var canvas = new SKBitmap(new SKImageInfo(
+            canvasDimensions.Width,
+            canvasDimensions.Height,
+            SKColorType.Rgba8888,
+            SKAlphaType.Premul));
+        canvas.Erase(SKColors.Transparent);
+
+        var renderedLayers = new Dictionary<string, (SKBitmap Bitmap, Point2D Offset)>(StringComparer.Ordinal);
+        var compositedLayers = new HashSet<string>(StringComparer.Ordinal);
+
+        return CompositeLayersCore(
+            layersObject,
+            canvasDimensions,
+            context,
+            effectiveSeedProvider,
+            diagnostics,
+            canvas,
+            renderedLayers,
+            compositedLayers);
+    }
+
+    private CanvasRenderResult CompositeLayersCore(
+        GfxObject layersObject,
+        Dimensions canvasDimensions,
+        EvaluationContext context,
+        DeterministicSeedProvider effectiveSeedProvider,
+        List<GfxDiagnostic> diagnostics,
+        SKBitmap canvas,
+        Dictionary<string, (SKBitmap Bitmap, Point2D Offset)> renderedLayers,
+        HashSet<string> compositedLayers)
+    {
         var layerSpans = ExtractLayerSpans(context.Document);
         var layerAstMap = ExtractLayerAstInfo(context.Document);
         var defaultSpan = context.Document?.Span
@@ -279,14 +579,6 @@ public sealed class GfxCanvasCompositor
             }
         }
 
-        var canvas = new SKBitmap(new SKImageInfo(
-            canvasDimensions.Width,
-            canvasDimensions.Height,
-            SKColorType.Rgba8888,
-            SKAlphaType.Premul));
-        canvas.Erase(SKColors.Transparent);
-
-        var renderedLayers = new Dictionary<string, (SKBitmap Bitmap, Point2D Offset)>(StringComparer.Ordinal);
         try
         {
             foreach (var layerId in layersObject.OrderedKeys)
@@ -314,9 +606,15 @@ public sealed class GfxCanvasCompositor
 
                 ValidateLayerProperties(layerId, layerProps, layerSpan, layerAstMap.GetValueOrDefault(layerId), diagnostics);
 
+                if (compositedLayers.Contains(layerId))
+                {
+                    continue;
+                }
+
                 // Check visible / enabled flag (defaults to true)
                 if (!IsLayerVisible(layerProps, layerId, layerSpan, diagnostics))
                 {
+                    compositedLayers.Add(layerId);
                     continue;
                 }
 
@@ -348,6 +646,8 @@ public sealed class GfxCanvasCompositor
                         PixelBlender.Composite(canvas, layerBitmap, offset, blendMode, opacity);
                     }
                 }
+
+                compositedLayers.Add(layerId);
             }
         }
         finally
@@ -433,8 +733,10 @@ public sealed class GfxCanvasCompositor
         var layerFrameRandom = layerSeedProvider.CreateRandom(layerRunNumber, context.Frame.Number, $"{layerId}:frame");
         var previousRandom = context.Random;
         var previousFrameRandom = context.FrameRandom;
+        var previousLayerId = context.CurrentLayerId;
         context.Random = layerRandom;
         context.FrameRandom = layerFrameRandom;
+        context.CurrentLayerId = layerId;
 
         SKBitmap? ResolveOtherLayerBitmap(string refLayerId)
         {
@@ -448,28 +750,28 @@ public sealed class GfxCanvasCompositor
                 return existingEntry.Bitmap;
             }
 
-            if (!allLayersObject.Properties.TryGetValue(refLayerId, out var refLayerVal)
-                || refLayerVal is not GfxObject refLayerProps)
+            if (allLayersObject.Properties.TryGetValue(refLayerId, out var refLayerVal)
+                && refLayerVal is GfxObject refLayerProps)
             {
-                return null;
+                return RenderSingleLayerWithTransforms(
+                    refLayerId,
+                    refLayerProps,
+                    allLayersObject,
+                    currentCanvas,
+                    canvasDimensions,
+                    context,
+                    effectiveSeedProvider,
+                    layerSpans,
+                    defaultSpan,
+                    diagnostics,
+                    renderedLayers,
+                    out Point2D _,
+                    out BlendMode _,
+                    out float _,
+                    out bool _);
             }
 
-            return RenderSingleLayerWithTransforms(
-                refLayerId,
-                refLayerProps,
-                allLayersObject,
-                currentCanvas,
-                canvasDimensions,
-                context,
-                effectiveSeedProvider,
-                layerSpans,
-                defaultSpan,
-                diagnostics,
-                renderedLayers,
-                out _,
-                out _,
-                out _,
-                out _);
+            return context.ResolveLayerBitmap?.Invoke(refLayerId, layerSpan);
         }
 
         SKBitmap? rawBitmap;
@@ -491,6 +793,7 @@ public sealed class GfxCanvasCompositor
                         layerRandom,
                         ResolveOtherLayerBitmap,
                         context,
+                        canvasSnapshot,
                         canvasSnapshot);
                     adjustmentRenderer.Effect.Apply(rawBitmap, effectContext);
                 }
@@ -505,7 +808,9 @@ public sealed class GfxCanvasCompositor
                         diagnostics,
                         layerRandom,
                         ResolveOtherLayerBitmap,
-                        context);
+                        context,
+                        rawBitmap,
+                        rawBitmap);
                     adjustmentRenderer.Effect.Apply(rawBitmap, effectContext);
                 }
             }
@@ -528,6 +833,7 @@ public sealed class GfxCanvasCompositor
         {
             context.Random = previousRandom;
             context.FrameRandom = previousFrameRandom;
+            context.CurrentLayerId = previousLayerId;
         }
 
         if (rawBitmap is null)
@@ -537,7 +843,7 @@ public sealed class GfxCanvasCompositor
 
         if (!isAdjustmentLayer)
         {
-            ApplyInlineLayerEffects(rawBitmap, layerProps, layerId, layerSpan, diagnostics, layerRandom, ResolveOtherLayerBitmap, context);
+            ApplyInlineLayerEffects(rawBitmap, layerProps, layerId, layerSpan, diagnostics, layerRandom, ResolveOtherLayerBitmap, context, currentCanvas, offset);
         }
 
         var transformed = ApplyLayerTransformIfNeeded(rawBitmap, layerProps, layerType, layerId, layerSpan, diagnostics);
@@ -581,7 +887,7 @@ public sealed class GfxCanvasCompositor
         ("warp", "warp", "strength"),
         ("displace", "displace", "strength"),
         ("twirl", "twirl", "angle"),
-        ("swirl", "swirl", "angle"),
+        ("swirl", "twirl", "angle"),
         ("ripple", "ripple", "amplitude"),
         ("spherize", "spherize", "amount"),
         ("pinch", "pinch", "amount"),
@@ -614,65 +920,79 @@ public sealed class GfxCanvasCompositor
         List<GfxDiagnostic> diagnostics,
         IGfxRandom layerRandom,
         Func<string, SKBitmap?> resolveLayerBitmap,
-        EvaluationContext context)
+        EvaluationContext context,
+        SKBitmap currentCanvas,
+        Point2D layerOffset)
     {
-        foreach (var (propName, effectName, scalarPropName) in InlineEffectBindings)
+        SKBitmap? canvasRegion = null;
+        try
         {
-            if (!layerProps.TryGetProperty(propName, out var propVal))
+            foreach (var (propName, effectName, scalarPropName) in InlineEffectBindings)
             {
-                continue;
+                if (!layerProps.TryGetProperty(propName, out var propVal))
+                {
+                    continue;
+                }
+
+                var effectProps = scalarPropName is not null
+                    ? CoerceEffectProps(propVal, scalarPropName)
+                    : propVal as GfxObject;
+
+                if (effectProps is not null && _effectRegistry.TryGetEffect(effectName, out var inlineEffect))
+                {
+                    canvasRegion ??= ExtractCanvasRegion(currentCanvas, layerOffset, new Dimensions(bitmap.Width, bitmap.Height));
+                    inlineEffect.Apply(bitmap, new EffectContext(
+                        layerId,
+                        effectProps,
+                        layerSpan,
+                        diagnostics,
+                        ResolveEffectRandom(effectProps, layerId, layerSpan, diagnostics, layerRandom),
+                        resolveLayerBitmap,
+                        context,
+                        canvasBitmap: canvasRegion));
+                }
             }
 
-            var effectProps = scalarPropName is not null
-                ? CoerceEffectProps(propVal, scalarPropName)
-                : propVal as GfxObject;
-
-            if (effectProps is not null && _effectRegistry.TryGetEffect(effectName, out var inlineEffect))
+            // effects = [ { type = ..., ... }, ... ]
+            if (layerProps.TryGetProperty("effects", out var effectsVal) && effectsVal is GfxArray effectsArr)
             {
-                inlineEffect.Apply(bitmap, new EffectContext(
-                    layerId,
-                    effectProps,
-                    layerSpan,
-                    diagnostics,
-                    ResolveEffectRandom(effectProps, layerId, layerSpan, diagnostics, layerRandom),
-                    resolveLayerBitmap,
-                    context));
+                foreach (var item in effectsArr.Items)
+                {
+                    if (item is not GfxObject fxObj || !fxObj.TryGetProperty("type", out var fxTypeVal))
+                    {
+                        diagnostics.Add(new GfxDiagnostic("FX008", $"Each item in 'effects' on layer '{layerId}' must be an object with a 'type' property.", layerSpan, DiagnosticSeverity.Error));
+                        continue;
+                    }
+
+                    var fxType = fxTypeVal switch
+                    {
+                        GfxSymbol s => s.Identifier,
+                        GfxString str => str.Value,
+                        _ => string.Empty
+                    };
+
+                    if (!_effectRegistry.TryGetEffect(fxType, out var effect))
+                    {
+                        diagnostics.Add(new GfxDiagnostic("FX008", $"Unknown effect type '{fxType}' on layer '{layerId}'.", layerSpan, DiagnosticSeverity.Error));
+                        continue;
+                    }
+
+                    canvasRegion ??= ExtractCanvasRegion(currentCanvas, layerOffset, new Dimensions(bitmap.Width, bitmap.Height));
+                    effect.Apply(bitmap, new EffectContext(
+                        layerId,
+                        fxObj,
+                        layerSpan,
+                        diagnostics,
+                        ResolveEffectRandom(fxObj, layerId, layerSpan, diagnostics, layerRandom),
+                        resolveLayerBitmap,
+                        context,
+                        canvasBitmap: canvasRegion));
+                }
             }
         }
-
-        // effects = [ { type = ..., ... }, ... ]
-        if (layerProps.TryGetProperty("effects", out var effectsVal) && effectsVal is GfxArray effectsArr)
+        finally
         {
-            foreach (var item in effectsArr.Items)
-            {
-                if (item is not GfxObject fxObj || !fxObj.TryGetProperty("type", out var fxTypeVal))
-                {
-                    diagnostics.Add(new GfxDiagnostic("FX008", $"Each item in 'effects' on layer '{layerId}' must be an object with a 'type' property.", layerSpan, DiagnosticSeverity.Error));
-                    continue;
-                }
-
-                var fxType = fxTypeVal switch
-                {
-                    GfxSymbol s => s.Identifier,
-                    GfxString str => str.Value,
-                    _ => string.Empty
-                };
-
-                if (!_effectRegistry.TryGetEffect(fxType, out var effect))
-                {
-                    diagnostics.Add(new GfxDiagnostic("FX008", $"Unknown effect type '{fxType}' on layer '{layerId}'.", layerSpan, DiagnosticSeverity.Error));
-                    continue;
-                }
-
-                effect.Apply(bitmap, new EffectContext(
-                    layerId,
-                    fxObj,
-                    layerSpan,
-                    diagnostics,
-                    ResolveEffectRandom(fxObj, layerId, layerSpan, diagnostics, layerRandom),
-                    resolveLayerBitmap,
-                    context));
-            }
+            canvasRegion?.Dispose();
         }
     }
 
@@ -767,6 +1087,30 @@ public sealed class GfxCanvasCompositor
         }
     }
 
+    private static GfxObject? TryGetTransformObject(
+        GfxObject layerProps,
+        string layerId,
+        SourceSpan layerSpan,
+        List<GfxDiagnostic>? diagnostics)
+    {
+        if (!layerProps.TryGetProperty("transform", out var transformVal))
+        {
+            return null;
+        }
+
+        if (transformVal is GfxObject transformObj)
+        {
+            return transformObj;
+        }
+
+        diagnostics?.Add(new GfxDiagnostic(
+            "RND036",
+            $"Property 'transform' on layer '{layerId}' must be an object block.",
+            layerSpan,
+            DiagnosticSeverity.Error));
+        return null;
+    }
+
     private static SKBitmap ApplyLayerTransformIfNeeded(
         SKBitmap source,
         GfxObject layerProps,
@@ -775,12 +1119,26 @@ public sealed class GfxCanvasCompositor
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics)
     {
-        var shapeHandlesRotationInternally = layerType.Equals("rect", StringComparison.OrdinalIgnoreCase)
+        var transformObj = TryGetTransformObject(layerProps, layerId, layerSpan, diagnostics);
+        var shapeHandlesTopLevelRotation = layerType.Equals("rect", StringComparison.OrdinalIgnoreCase)
             || layerType.Equals("polygon", StringComparison.OrdinalIgnoreCase)
             || layerType.Equals("star", StringComparison.OrdinalIgnoreCase);
 
         var rotation = 0.0f;
-        if (!shapeHandlesRotationInternally && layerProps.TryGetProperty("rotation", out var rotVal))
+        if (transformObj is not null
+            && (transformObj.TryGetProperty("rotation", out var tRotVal) || transformObj.TryGetProperty("rotate", out tRotVal)))
+        {
+            if (tRotVal is GfxNumber rotNum)
+            {
+                rotation = rotNum.AsSingle();
+            }
+            else
+            {
+                diagnostics.Add(new GfxDiagnostic("RND036", $"Property 'rotation' in 'transform' on layer '{layerId}' must be a number.", layerSpan, DiagnosticSeverity.Error));
+            }
+        }
+        else if (!shapeHandlesTopLevelRotation
+            && (layerProps.TryGetProperty("rotation", out var rotVal) || layerProps.TryGetProperty("rotate", out rotVal)))
         {
             if (rotVal is GfxNumber rotNum)
             {
@@ -791,18 +1149,32 @@ public sealed class GfxCanvasCompositor
                 diagnostics.Add(new GfxDiagnostic("RND036", $"Property 'rotation' on layer '{layerId}' must be a number.", layerSpan, DiagnosticSeverity.Error));
             }
         }
+        else if (shapeHandlesTopLevelRotation
+            && !layerProps.Properties.ContainsKey("rotation")
+            && layerProps.TryGetProperty("rotate", out var rotateAliasVal))
+        {
+            if (rotateAliasVal is GfxNumber rotNum)
+            {
+                rotation = rotNum.AsSingle();
+            }
+            else
+            {
+                diagnostics.Add(new GfxDiagnostic("RND036", $"Property 'rotate' on layer '{layerId}' must be a number.", layerSpan, DiagnosticSeverity.Error));
+            }
+        }
 
-        var (scaleX, scaleY) = ExtractLayerTransformScale(layerProps, layerType, layerId, layerSpan, diagnostics);
-        var (shearX, shearY) = ExtractLayerShear(layerProps, layerId, layerSpan, diagnostics);
-        var flipX = ExtractLayerBoolean(layerProps, "flip_x", layerId, layerSpan, diagnostics);
-        var flipY = ExtractLayerBoolean(layerProps, "flip_y", layerId, layerSpan, diagnostics);
-        var wrapMode = ExtractLayerWrapMode(layerProps, layerType, layerId, layerSpan, diagnostics);
+        var (scaleX, scaleY) = ExtractLayerTransformScale(layerProps, transformObj, layerType, layerId, layerSpan, diagnostics);
+        var (shearX, shearY) = ExtractLayerShear(layerProps, transformObj, layerId, layerSpan, diagnostics);
+        var flipX = ExtractLayerBoolean(layerProps, transformObj, "flip_x", layerId, layerSpan, diagnostics);
+        var flipY = ExtractLayerBoolean(layerProps, transformObj, "flip_y", layerId, layerSpan, diagnostics);
+        var wrapMode = ExtractLayerWrapMode(layerProps, transformObj, layerType, layerId, layerSpan, diagnostics);
 
         if (wrapMode != LayerWrapMode.None)
         {
             return ApplyWrappedLayerTransform(
                 source,
                 layerProps,
+                transformObj,
                 layerId,
                 layerSpan,
                 diagnostics,
@@ -851,7 +1223,7 @@ public sealed class GfxCanvasCompositor
             return flipped;
         }
 
-        var (anchorX, anchorY) = ExtractLayerAnchor(layerProps, width, height);
+        var (anchorX, anchorY) = ExtractLayerAnchor(layerProps, transformObj, width, height);
         var dest = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         dest.Erase(SKColors.Transparent);
 
@@ -865,9 +1237,7 @@ public sealed class GfxCanvasCompositor
         canvas.Scale(finalScaleX, finalScaleY);
         canvas.Translate(-anchorX, -anchorY);
 
-        var useNearest = layerProps.TryGetProperty("resample", out var resVal)
-            && ((resVal is GfxSymbol s && string.Equals(s.Identifier, "nearest", StringComparison.OrdinalIgnoreCase))
-                || (resVal is GfxString str && string.Equals(str.Value, "nearest", StringComparison.OrdinalIgnoreCase)));
+        var useNearest = ExtractLayerUseNearest(layerProps, transformObj);
 
         using var paint = new SKPaint
         {
@@ -879,9 +1249,23 @@ public sealed class GfxCanvasCompositor
         return dest;
     }
 
+    private static bool ExtractLayerUseNearest(GfxObject layerProps, GfxObject? transformObj)
+    {
+        if (transformObj is not null && transformObj.TryGetProperty("resample", out var tResVal))
+        {
+            return (tResVal is GfxSymbol ts && string.Equals(ts.Identifier, "nearest", StringComparison.OrdinalIgnoreCase))
+                || (tResVal is GfxString tstr && string.Equals(tstr.Value, "nearest", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return layerProps.TryGetProperty("resample", out var resVal)
+            && ((resVal is GfxSymbol s && string.Equals(s.Identifier, "nearest", StringComparison.OrdinalIgnoreCase))
+                || (resVal is GfxString str && string.Equals(str.Value, "nearest", StringComparison.OrdinalIgnoreCase)));
+    }
+
     private static SKBitmap ApplyWrappedLayerTransform(
         SKBitmap source,
         GfxObject layerProps,
+        GfxObject? transformObj,
         string layerId,
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics,
@@ -896,7 +1280,7 @@ public sealed class GfxCanvasCompositor
     {
         var width = source.Width;
         var height = source.Height;
-        var (anchorX, anchorY) = ExtractLayerAnchor(layerProps, width, height);
+        var (anchorX, anchorY) = ExtractLayerAnchor(layerProps, transformObj, width, height);
         var finalScaleX = flipX ? -scaleX : scaleX;
         var finalScaleY = flipY ? -scaleY : scaleY;
         var radians = rotation * (Math.PI / 180.0);
@@ -921,9 +1305,7 @@ public sealed class GfxCanvasCompositor
             return empty;
         }
 
-        var useNearest = layerProps.TryGetProperty("resample", out var resVal)
-            && ((resVal is GfxSymbol symbol && string.Equals(symbol.Identifier, "nearest", StringComparison.OrdinalIgnoreCase))
-                || (resVal is GfxString text && string.Equals(text.Value, "nearest", StringComparison.OrdinalIgnoreCase)));
+        var useNearest = ExtractLayerUseNearest(layerProps, transformObj);
         var dest = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         for (var y = 0; y < height; y++)
         {
@@ -942,30 +1324,51 @@ public sealed class GfxCanvasCompositor
 
     private static LayerWrapMode ExtractLayerWrapMode(
         GfxObject layerProps,
+        GfxObject? transformObj,
         string layerType,
         string layerId,
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics)
     {
         var propertyName = "wrap_mode";
-        if (!layerProps.TryGetProperty("wrap_mode", out var value))
-        {
-            if (!layerProps.TryGetProperty("wrap", out value))
-            {
-                return LayerWrapMode.None;
-            }
+        GfxValue? value = null;
+        var fromTransformBlock = false;
 
-            // Preserve the boolean `wrap` option on standalone spatial-effect layers.
-            if (value is GfxBoolean)
+        if (transformObj is not null)
+        {
+            if (transformObj.TryGetProperty("wrap_mode", out value))
             {
-                if (layerType.Equals("warp", StringComparison.OrdinalIgnoreCase)
-                    || layerType.Equals("displace", StringComparison.OrdinalIgnoreCase))
+                propertyName = "wrap_mode";
+                fromTransformBlock = true;
+            }
+            else if (transformObj.TryGetProperty("wrap", out value))
+            {
+                propertyName = "wrap";
+                fromTransformBlock = true;
+            }
+        }
+
+        if (!fromTransformBlock)
+        {
+            if (!layerProps.TryGetProperty("wrap_mode", out value))
+            {
+                if (!layerProps.TryGetProperty("wrap", out value))
                 {
                     return LayerWrapMode.None;
                 }
-            }
 
-            propertyName = "wrap";
+                // Preserve the boolean `wrap` option on standalone spatial-effect layers.
+                if (value is GfxBoolean)
+                {
+                    if (layerType.Equals("warp", StringComparison.OrdinalIgnoreCase)
+                        || layerType.Equals("displace", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return LayerWrapMode.None;
+                    }
+                }
+
+                propertyName = "wrap";
+            }
         }
 
         var modeName = value switch
@@ -1076,11 +1479,13 @@ public sealed class GfxCanvasCompositor
 
     private static (float X, float Y) ExtractLayerShear(
         GfxObject layerProps,
+        GfxObject? transformObj,
         string layerId,
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics)
     {
-        if (!layerProps.TryGetProperty("shear", out var shearVal))
+        if ((transformObj is null || !transformObj.TryGetProperty("shear", out var shearVal))
+            && !layerProps.TryGetProperty("shear", out shearVal))
         {
             return (0.0f, 0.0f);
         }
@@ -1102,11 +1507,31 @@ public sealed class GfxCanvasCompositor
 
     private static (float ScaleX, float ScaleY) ExtractLayerTransformScale(
         GfxObject layerProps,
+        GfxObject? transformObj,
         string layerType,
         string layerId,
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics)
     {
+        // Inside `transform = { ... }`, `scale` and `transform_scale` are ALWAYS unambiguous 2D transform scales
+        if (transformObj is not null
+            && (transformObj.TryGetProperty("transform_scale", out var tScaleVal) || transformObj.TryGetProperty("scale", out tScaleVal)))
+        {
+            if (tScaleVal is GfxNumber tNum)
+            {
+                var s = tNum.AsSingle();
+                return (s, s);
+            }
+
+            if (tScaleVal.TryCoerceToPoint2D(out var tPt))
+            {
+                return (tPt.X, tPt.Y);
+            }
+
+            diagnostics.Add(new GfxDiagnostic("RND036", $"Invalid 'scale' property in 'transform' on layer '{layerId}'.", layerSpan, DiagnosticSeverity.Error));
+            return (1.0f, 1.0f);
+        }
+
         var isNoiseLayer = layerType.Equals("fractal_clouds", StringComparison.OrdinalIgnoreCase)
             || layerType.Equals("perlin", StringComparison.OrdinalIgnoreCase)
             || layerType.Equals("simplex", StringComparison.OrdinalIgnoreCase)
@@ -1142,7 +1567,7 @@ public sealed class GfxCanvasCompositor
 
         if (scaleVal.TryCoerceToPoint2D(out var pt))
         {
-            return ((float)pt.X, (float)pt.Y);
+            return (pt.X, pt.Y);
         }
 
         diagnostics.Add(new GfxDiagnostic("RND036", $"Invalid 'scale' property on layer '{layerId}'.", layerSpan, DiagnosticSeverity.Error));
@@ -1151,12 +1576,14 @@ public sealed class GfxCanvasCompositor
 
     private static bool ExtractLayerBoolean(
         GfxObject layerProps,
+        GfxObject? transformObj,
         string propName,
         string layerId,
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics)
     {
-        if (!layerProps.TryGetProperty(propName, out var val))
+        if ((transformObj is null || !transformObj.TryGetProperty(propName, out var val))
+            && !layerProps.TryGetProperty(propName, out val))
         {
             return false;
         }
@@ -1170,15 +1597,20 @@ public sealed class GfxCanvasCompositor
         return false;
     }
 
-    private static (float X, float Y) ExtractLayerAnchor(GfxObject layerProps, int width, int height)
+    private static (float X, float Y) ExtractLayerAnchor(GfxObject layerProps, GfxObject? transformObj, int width, int height)
     {
-        if (!layerProps.TryGetProperty("anchor", out var anchorVal)
+        GfxValue? anchorVal = null;
+        var found = transformObj is not null
+            && (transformObj.TryGetProperty("anchor", out anchorVal) || transformObj.TryGetProperty("pivot", out anchorVal));
+
+        if (!found
+            && !layerProps.TryGetProperty("anchor", out anchorVal)
             && !layerProps.TryGetProperty("pivot", out anchorVal))
         {
             return (width * 0.5f, height * 0.5f);
         }
 
-        if (anchorVal.TryCoerceToPoint2D(out var pt))
+        if (anchorVal is not null && anchorVal.TryCoerceToPoint2D(out var pt))
         {
             if (pt.X is >= 0.0f and <= 1.0f && pt.Y is >= 0.0f and <= 1.0f)
             {
@@ -1426,6 +1858,31 @@ public sealed class GfxCanvasCompositor
         SourceSpan layerSpan,
         List<GfxDiagnostic> diagnostics)
     {
+        if (layerProps.TryGetProperty("transform", out var tVal) && tVal is GfxObject transformObj)
+        {
+            if (transformObj.TryGetProperty("offset", out var tOffsetVal))
+            {
+                if (tOffsetVal.TryCoerceToPoint2D(out var pt))
+                {
+                    return pt;
+                }
+
+                diagnostics.Add(new GfxDiagnostic("RND008", $"Invalid 'offset' property in 'transform' on layer '{layerId}' (expected '{{ x = <number>, y = <number> }}').", layerSpan, DiagnosticSeverity.Error));
+                return new Point2D(0, 0);
+            }
+
+            if (transformObj.TryGetProperty("position", out var tPosVal))
+            {
+                if (tPosVal.TryCoerceToPoint2D(out var pt))
+                {
+                    return pt;
+                }
+
+                diagnostics.Add(new GfxDiagnostic("RND008", $"Invalid 'position' property in 'transform' on layer '{layerId}' (expected '{{ x = <number>, y = <number> }}').", layerSpan, DiagnosticSeverity.Error));
+                return new Point2D(0, 0);
+            }
+        }
+
         var layerType = layerProps.TryGetProperty("type", out var tv)
             ? tv switch { GfxSymbol s => s.Identifier, GfxString str => str.Value, _ => string.Empty }
             : string.Empty;
@@ -1549,6 +2006,27 @@ public sealed class GfxCanvasCompositor
             }
         }
 
+        // Validate `transform = { ... }` sub-properties
+        if (layerProps.TryGetProperty("transform", out var transformVal) && transformVal is GfxObject transformProps)
+        {
+            var transformSpans = layerAst?.InlineEffectPropertySpans.GetValueOrDefault("transform");
+            foreach (var subProp in transformProps.OrderedKeys)
+            {
+                if (!TransformBlockProperties.Contains(subProp))
+                {
+                    var suggestion = PropertySuggestionHelper.GetSuggestionSuffix(subProp, TransformBlockProperties);
+                    var subSpan = transformSpans?.GetValueOrDefault(subProp)
+                        ?? layerAst?.PropertySpans.GetValueOrDefault("transform")
+                        ?? layerSpan;
+                    diagnostics.Add(new GfxDiagnostic(
+                        "RND050",
+                        $"Unknown property '{subProp}' in 'transform' block on layer '{layerId}'.{suggestion}",
+                        subSpan,
+                        DiagnosticSeverity.Warning));
+                }
+            }
+        }
+
         // Validate inline effects on this layer
         foreach (var (propName, effectName, _) in InlineEffectBindings)
         {
@@ -1639,6 +2117,29 @@ public sealed class GfxCanvasCompositor
         Dictionary<string, SourceSpan> PropertySpans,
         Dictionary<string, Dictionary<string, SourceSpan>> InlineEffectPropertySpans,
         List<Dictionary<string, SourceSpan>> ArrayEffectPropertySpans);
+
+    private static List<string> ExtractDeclaredLayerOrder(GfxDocument? document)
+    {
+        var order = new List<string>();
+        if (document is null)
+        {
+            return order;
+        }
+
+        var layersProp = document.Properties.LastOrDefault(p => p.Name == "layers");
+        if (layersProp?.Value is ObjectBlockExpr layersBlock)
+        {
+            foreach (var prop in layersBlock.Properties)
+            {
+                if (!order.Contains(prop.Name, StringComparer.Ordinal))
+                {
+                    order.Add(prop.Name);
+                }
+            }
+        }
+
+        return order;
+    }
 
     private static Dictionary<string, LayerAstInfo> ExtractLayerAstInfo(GfxDocument? document)
     {

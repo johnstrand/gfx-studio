@@ -1,16 +1,22 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using GfxStudio.Core.Formatting;
 using GfxStudio.Core.Parsing;
+using GfxStudio.Core.Rendering;
 using SkiaSharp;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace GfxStudio.Editor;
 
@@ -26,12 +32,26 @@ public partial class MainView : Window
     private static readonly IBrush PunctuationBrush = Brush.Parse("#D4D4D4");
     private readonly MainViewModel _viewModel;
     private readonly Dictionary<string, string> _samplePaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LayerRendererRegistry _layerRegistry = LayerRendererRegistry.CreateDefault();
     private Bitmap? _currentPreviewBitmap;
     private Bitmap? _checkerboardBitmap;
     private bool _syncingScroll;
     private DispatcherTimer? _playTimer;
+
+    private const string DefaultNewScript =
+@"layers = {
+}
+
+variables = {
+}
+
+output = {
+  dimensions = { width = 64, height = 64 }
+  filename = ""image.png""
+}";
+
     private const string FallbackGfx =
-        @"layers = {
+@"layers = {
   background = { type = fill color = rgb(20, 30, 40) }
   clouds = { type = fractal_clouds mix = screen color = color_ramp(NAMED_COLORS.RED, NAMED_COLORS.BLUE) }
 }
@@ -50,13 +70,13 @@ output = {
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
 
+        WireMenu();
+        WireEditorQoL();
         PopulateSamples();
         WireScrollSync();
         WireFrameNavigation();
         WireDiagnostics();
-        WireSeedTextBox();
-        SampleComboBox.SelectionChanged += OnSampleSelected;
-        RunButton.Click += (s, e) => _viewModel.RunNow();
+        KeyDown += OnWindowKeyDown;
 
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
 
@@ -65,6 +85,699 @@ output = {
         Closed += OnClosed;
 
         LoadSample();
+        UpdateTitle();
+    }
+
+    private void WireMenu()
+    {
+        NewMenuItem.Click += OnNewClicked;
+        OpenMenuItem.Click += OnOpenClicked;
+        SaveMenuItem.Click += OnSaveClicked;
+        SaveAsMenuItem.Click += OnSaveAsClicked;
+        ExitMenuItem.Click += (s, e) => Close();
+        RunMenuItem.Click += (s, e) => _viewModel.RunNow();
+        RunOnChangeMenuItem.Click += (s, e) => _viewModel.RunOnChange = !_viewModel.RunOnChange;
+        SetSeedMenuItem.Click += async (s, e) => await ShowSetSeedDialogAsync();
+        QuickAddLayerMenuItem.Click += async (s, e) => await ShowQuickAddLayerDialogAsync();
+        FormatDocumentMenuItem.Click += (s, e) => FormatDocument();
+        QuickAddLayerButton.Click += async (s, e) => await ShowQuickAddLayerDialogAsync();
+        FormatDocumentButton.Click += (s, e) => FormatDocument();
+        UpdateRunOnChangeMenu();
+    }
+
+    private void WireEditorQoL()
+    {
+        EditorTextBox.KeyDown += OnEditorKeyDown;
+        EditorTextBox.TextInput += OnEditorTextInput;
+    }
+
+    private void OnEditorKeyDown(object? sender, KeyEventArgs e)
+    {
+        // Format Document: Shift+Alt+F or Ctrl+Shift+F
+        if (e.Key == Key.F && e.KeyModifiers.HasFlag(KeyModifiers.Shift) &&
+            (e.KeyModifiers.HasFlag(KeyModifiers.Alt) || e.KeyModifiers.HasFlag(KeyModifiers.Control)))
+        {
+            FormatDocument();
+            e.Handled = true;
+            return;
+        }
+
+        // Quick-Add Layer: Ctrl+Shift+L
+        if (e.Key == Key.L && e.KeyModifiers.HasFlag(KeyModifiers.Control) && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            _ = ShowQuickAddLayerDialogAsync();
+            e.Handled = true;
+            return;
+        }
+
+        // 1. Enter key: auto-indent & smart block expansion
+        if (e.Key is Key.Enter or Key.Return)
+        {
+            var text = EditorTextBox.Text ?? string.Empty;
+            var (newText, newCaret) = GfxEditorTextHelper.HandleEnter(
+                text,
+                EditorTextBox.CaretIndex,
+                EditorTextBox.SelectionStart,
+                EditorTextBox.SelectionEnd);
+
+            EditorTextBox.Text = newText;
+            EditorTextBox.CaretIndex = newCaret;
+            e.Handled = true;
+            return;
+        }
+
+        // 2. Backspace key: paired delimiter deletion
+        if (e.Key == Key.Back)
+        {
+            var text = EditorTextBox.Text ?? string.Empty;
+            var (handled, newText, newCaret) = GfxEditorTextHelper.HandleBackspace(
+                text,
+                EditorTextBox.CaretIndex,
+                EditorTextBox.SelectionStart,
+                EditorTextBox.SelectionEnd);
+
+            if (handled)
+            {
+                EditorTextBox.Text = newText;
+                EditorTextBox.CaretIndex = newCaret;
+                e.Handled = true;
+                return;
+            }
+        }
+
+        // 3. Tab & Shift+Tab: indent / outdent
+        if (e.Key == Key.Tab)
+        {
+            var text = EditorTextBox.Text ?? string.Empty;
+            var isShift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+            var (newText, newStart, newEnd) = GfxEditorTextHelper.HandleTab(
+                text,
+                EditorTextBox.SelectionStart,
+                EditorTextBox.SelectionEnd,
+                isShift);
+
+            EditorTextBox.Text = newText;
+            EditorTextBox.SelectionStart = newStart;
+            EditorTextBox.SelectionEnd = newEnd;
+            e.Handled = true;
+            return;
+        }
+
+        // 4. Ctrl+/: toggle line comment
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && (e.Key is Key.Oem2 or Key.Divide or Key.OemQuestion))
+        {
+            var text = EditorTextBox.Text ?? string.Empty;
+            var (newText, newStart, newEnd) = GfxEditorTextHelper.ToggleComment(
+                text,
+                EditorTextBox.SelectionStart,
+                EditorTextBox.SelectionEnd);
+
+            EditorTextBox.Text = newText;
+            EditorTextBox.SelectionStart = newStart;
+            EditorTextBox.SelectionEnd = newEnd;
+            e.Handled = true;
+            return;
+        }
+    }
+
+    private void OnEditorTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (string.IsNullOrEmpty(e.Text)) return;
+
+        var ch = e.Text[0];
+        var text = EditorTextBox.Text ?? string.Empty;
+        var (handled, newText, newCaret, newSelStart, newSelEnd) = GfxEditorTextHelper.HandleTextInput(
+            text,
+            EditorTextBox.SelectionStart,
+            EditorTextBox.SelectionEnd,
+            ch);
+
+        if (handled)
+        {
+            EditorTextBox.Text = newText;
+            if (newSelStart != newSelEnd)
+            {
+                EditorTextBox.SelectionStart = newSelStart;
+                EditorTextBox.SelectionEnd = newSelEnd;
+            }
+            else
+            {
+                EditorTextBox.CaretIndex = newCaret;
+            }
+
+            e.Handled = true;
+        }
+    }
+
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F5)
+        {
+            _viewModel.RunNow();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F && e.KeyModifiers.HasFlag(KeyModifiers.Shift) &&
+            (e.KeyModifiers.HasFlag(KeyModifiers.Alt) || e.KeyModifiers.HasFlag(KeyModifiers.Control)))
+        {
+            FormatDocument();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            if (e.Key == Key.L && e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                _ = ShowQuickAddLayerDialogAsync();
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.N)
+            {
+                OnNewClicked(null, null);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.O)
+            {
+                OnOpenClicked(null, null);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.S)
+            {
+                if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+                {
+                    OnSaveAsClicked(null, null);
+                }
+                else
+                {
+                    OnSaveClicked(null, null);
+                }
+
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.R)
+            {
+                _viewModel.RunOnChange = !_viewModel.RunOnChange;
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.E)
+            {
+                _ = ShowSetSeedDialogAsync();
+                e.Handled = true;
+                return;
+            }
+        }
+    }
+
+    private void FormatDocument()
+    {
+        var source = EditorTextBox.Text ?? string.Empty;
+        var filePath = !string.IsNullOrWhiteSpace(_viewModel.SourceFilePath) ? _viewModel.SourceFilePath : "<editor>";
+        var result = GfxFormatter.Format(source, filePath);
+
+        if (result.HasErrors)
+        {
+            StatusBar.Text = "Cannot format document with syntax errors.";
+            return;
+        }
+
+        if (result.Changed)
+        {
+            var (caretLine, caretCol) = CaretIndexToLineCol(source, EditorTextBox.CaretIndex);
+            var scrollOffset = EditorScrollViewer.Offset;
+
+            EditorTextBox.Text = result.FormattedText;
+            EditorTextBox.CaretIndex = TextLineToCaretIndex(result.FormattedText, caretLine, caretCol);
+            EditorScrollViewer.Offset = scrollOffset;
+        }
+
+        StatusBar.Text = "Document formatted.";
+    }
+
+    private static (int Line, int Column) CaretIndexToLineCol(string text, int caretIndex)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return (1, 1);
+        }
+
+        var clamped = Math.Clamp(caretIndex, 0, text.Length);
+        var line = 1;
+        var col = 1;
+        for (var i = 0; i < clamped; i++)
+        {
+            if (text[i] == '\n')
+            {
+                line++;
+                col = 1;
+            }
+            else if (text[i] != '\r')
+            {
+                col++;
+            }
+        }
+
+        return (line, col);
+    }
+
+    private async Task ShowQuickAddLayerDialogAsync()
+    {
+        var allTypes = _layerRegistry.RegisteredLayerTypes
+            .OrderBy(t => t, StringComparer.Ordinal)
+            .ToList();
+
+        var defaultType = allTypes.Contains("fill") ? "fill" : allTypes.FirstOrDefault() ?? "fill";
+
+        var nameBox = new TextBox
+        {
+            Text = SuggestUniqueLayerName(defaultType),
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13,
+            Watermark = "e.g. my_layer"
+        };
+
+        var validationText = new TextBlock
+        {
+            Foreground = Brush.Parse("#F48771"),
+            FontSize = 11,
+            IsVisible = false,
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+
+        var typeCombo = new ComboBox
+        {
+            ItemsSource = allTypes,
+            SelectedItem = defaultType,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13
+        };
+
+        var typeDescriptionText = new TextBlock
+        {
+            Foreground = Brush.Parse("#9A9A9A"),
+            FontSize = 11,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 8)
+        };
+
+        var dynamicPropsStack = new StackPanel
+        {
+            Spacing = 8
+        };
+
+        var addButton = new Button
+        {
+            Content = "Add Layer",
+            MinWidth = 96,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            IsDefault = true
+        };
+
+        var cancelButton = new Button
+        {
+            Content = "Cancel",
+            MinWidth = 80,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            IsCancel = true
+        };
+
+        var layerInputGetters = new List<(LayerPropertyDescriptor Descriptor, Func<string> GetValue)>();
+        var commonInputGetters = new List<(string Key, Func<string> GetValue)>();
+        var transformInputGetters = new List<(string Key, Func<string> GetValue)>();
+
+        void ValidateForm()
+        {
+            var candidateName = nameBox.Text?.Trim() ?? string.Empty;
+            if (!GfxEditorTextHelper.IsValidIdentifier(candidateName))
+            {
+                validationText.Text = "Layer name must be a valid identifier (letters, digits, '_', not starting with a digit).";
+                validationText.IsVisible = true;
+                addButton.IsEnabled = false;
+                return;
+            }
+
+            foreach (var (desc, getter) in layerInputGetters)
+            {
+                if (desc.IsRequired && string.IsNullOrWhiteSpace(getter()))
+                {
+                    validationText.Text = $"Required property '{desc.Name}' must be specified.";
+                    validationText.IsVisible = true;
+                    addButton.IsEnabled = false;
+                    return;
+                }
+            }
+
+            validationText.IsVisible = false;
+            addButton.IsEnabled = true;
+        }
+
+        Control CreatePropertyInput(LayerPropertyDescriptor desc, Action onChanged)
+        {
+            if (desc.AllowedValues is { Count: > 0 })
+            {
+                var options = new List<string> { string.Empty };
+                options.AddRange(desc.AllowedValues);
+                var combo = new ComboBox
+                {
+                    ItemsSource = options,
+                    SelectedIndex = 0,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    FontFamily = new FontFamily("Consolas"),
+                    FontSize = 12,
+                    PlaceholderText = desc.DefaultValue is not null ? $"default: {desc.DefaultValue}" : $"({desc.ValueType})"
+                };
+                ToolTip.SetTip(combo, desc.Description);
+                combo.SelectionChanged += (_, _) => onChanged();
+                layerInputGetters.Add((desc, () => combo.SelectedItem as string ?? string.Empty));
+                return combo;
+            }
+            else
+            {
+                var tb = new TextBox
+                {
+                    Text = desc.IsRequired ? (desc.DefaultValue ?? GetSuggestedRequiredDefault(desc)) : string.Empty,
+                    Watermark = desc.DefaultValue is not null
+                        ? $"({desc.ValueType}) default: {desc.DefaultValue}"
+                        : $"({desc.ValueType})",
+                    FontFamily = new FontFamily("Consolas"),
+                    FontSize = 12
+                };
+                ToolTip.SetTip(tb, desc.Description);
+                tb.TextChanged += (_, _) => onChanged();
+                layerInputGetters.Add((desc, () => tb.Text?.Trim() ?? string.Empty));
+                return tb;
+            }
+        }
+
+        void RebuildPropertiesPanel(string selectedType)
+        {
+            dynamicPropsStack.Children.Clear();
+            layerInputGetters.Clear();
+            commonInputGetters.Clear();
+            transformInputGetters.Clear();
+
+            if (!_layerRegistry.TryGet(selectedType, out var renderer) || renderer is null)
+            {
+                typeDescriptionText.Text = string.Empty;
+                ValidateForm();
+                return;
+            }
+
+            typeDescriptionText.Text = $"[{renderer.Category}] {renderer.Description}";
+
+            var requiredProps = renderer.PropertyDescriptors.Where(p => p.IsRequired).ToList();
+            var optionalProps = renderer.PropertyDescriptors.Where(p => !p.IsRequired).ToList();
+
+            if (requiredProps.Count > 0)
+            {
+                dynamicPropsStack.Children.Add(CreateSectionHeader("Required Properties", "#FFD866"));
+                foreach (var prop in requiredProps)
+                {
+                    dynamicPropsStack.Children.Add(CreateLabeledField(
+                        $"{prop.Name} *",
+                        prop.Description,
+                        CreatePropertyInput(prop, ValidateForm)));
+                }
+            }
+
+            if (optionalProps.Count > 0)
+            {
+                dynamicPropsStack.Children.Add(CreateSectionHeader("Optional Layer Properties", "#9CDCFE"));
+                foreach (var prop in optionalProps)
+                {
+                    dynamicPropsStack.Children.Add(CreateLabeledField(
+                        prop.Name,
+                        prop.Description,
+                        CreatePropertyInput(prop, ValidateForm)));
+                }
+            }
+
+            // Common & Transform Properties section
+            dynamicPropsStack.Children.Add(CreateSectionHeader("Common & Transform Properties (Optional)", "#C586C0"));
+
+            var mixDescriptor = GfxCanvasCompositor.UniversalPropertyDescriptors.First(d => d.Name == "mix");
+            var mixOptions = new List<string> { string.Empty };
+            if (mixDescriptor.AllowedValues is not null)
+            {
+                mixOptions.AddRange(mixDescriptor.AllowedValues);
+            }
+            var mixCombo = new ComboBox
+            {
+                ItemsSource = mixOptions,
+                SelectedIndex = 0,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 12,
+                PlaceholderText = "default: normal"
+            };
+            commonInputGetters.Add(("mix", () => mixCombo.SelectedItem as string ?? string.Empty));
+            dynamicPropsStack.Children.Add(CreateLabeledField("mix", mixDescriptor.Description, mixCombo));
+
+            foreach (var commonName in new[] { "opacity", "size", "seed" })
+            {
+                var desc = GfxCanvasCompositor.UniversalPropertyDescriptors.First(d => d.Name == commonName);
+                var tb = new TextBox
+                {
+                    Watermark = $"({desc.ValueType}) default: {desc.DefaultValue ?? "none"}",
+                    FontFamily = new FontFamily("Consolas"),
+                    FontSize = 12
+                };
+                var capturedName = commonName;
+                commonInputGetters.Add((capturedName, () => tb.Text?.Trim() ?? string.Empty));
+                dynamicPropsStack.Children.Add(CreateLabeledField(commonName, desc.Description, tb));
+            }
+
+            foreach (var transformName in new[] { "offset", "rotation", "scale" })
+            {
+                var desc = GfxCanvasCompositor.TransformPropertyDescriptors.First(d => d.Name == transformName);
+                var tb = new TextBox
+                {
+                    Watermark = $"({desc.ValueType}) default: {desc.DefaultValue ?? "none"}",
+                    FontFamily = new FontFamily("Consolas"),
+                    FontSize = 12
+                };
+                var capturedTransformName = transformName;
+                transformInputGetters.Add((capturedTransformName, () => tb.Text?.Trim() ?? string.Empty));
+                dynamicPropsStack.Children.Add(CreateLabeledField($"transform.{transformName}", desc.Description, tb));
+            }
+
+            ValidateForm();
+        }
+
+        var lastSuggestedName = nameBox.Text;
+        nameBox.TextChanged += (_, _) => ValidateForm();
+        typeCombo.SelectionChanged += (_, _) =>
+        {
+            if (typeCombo.SelectedItem is string newType)
+            {
+                if (string.Equals(nameBox.Text, lastSuggestedName, StringComparison.Ordinal))
+                {
+                    lastSuggestedName = SuggestUniqueLayerName(newType);
+                    nameBox.Text = lastSuggestedName;
+                }
+
+                RebuildPropertiesPanel(newType);
+            }
+        };
+
+        RebuildPropertiesPanel(defaultType);
+
+        var scrollViewer = new ScrollViewer
+        {
+            MaxHeight = 380,
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            Content = dynamicPropsStack,
+            Padding = new Thickness(0, 0, 8, 0)
+        };
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 8,
+            Margin = new Thickness(0, 12, 0, 0),
+            Children = { cancelButton, addButton }
+        };
+
+        var dialog = new Window
+        {
+            Title = "Quick-Add Layer",
+            Width = 520,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Brush.Parse("#262626"),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Spacing = 6,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Layer Name",
+                        FontWeight = FontWeight.Bold,
+                        Foreground = Brush.Parse("#E8E8E8")
+                    },
+                    nameBox,
+                    validationText,
+                    new TextBlock
+                    {
+                        Text = "Layer Type",
+                        FontWeight = FontWeight.Bold,
+                        Foreground = Brush.Parse("#E8E8E8"),
+                        Margin = new Thickness(0, 6, 0, 0)
+                    },
+                    typeCombo,
+                    typeDescriptionText,
+                    new Border
+                    {
+                        Background = Brush.Parse("#1E1E1E"),
+                        BorderBrush = Brush.Parse("#3A3A3A"),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(4),
+                        Padding = new Thickness(12),
+                        Child = scrollViewer
+                    },
+                    buttonPanel
+                }
+            }
+        };
+
+        addButton.Click += (_, _) =>
+        {
+            ValidateForm();
+            if (!addButton.IsEnabled)
+            {
+                return;
+            }
+
+            var layerName = nameBox.Text!.Trim();
+            var selectedType = typeCombo.SelectedItem as string ?? defaultType;
+
+            var props = new List<(string Key, string Value)>();
+            foreach (var (desc, getter) in layerInputGetters)
+            {
+                var val = getter();
+                if (!string.IsNullOrWhiteSpace(val))
+                {
+                    props.Add((desc.Name, val));
+                }
+            }
+
+            foreach (var (key, getter) in commonInputGetters)
+            {
+                var val = getter();
+                if (!string.IsNullOrWhiteSpace(val))
+                {
+                    props.Add((key, val));
+                }
+            }
+
+            var transforms = new List<(string Key, string Value)>();
+            foreach (var (key, getter) in transformInputGetters)
+            {
+                var val = getter();
+                if (!string.IsNullOrWhiteSpace(val))
+                {
+                    transforms.Add((key, val));
+                }
+            }
+
+            var (newText, newCaret) = GfxEditorTextHelper.InsertLayerBlock(
+                EditorTextBox.Text,
+                layerName,
+                selectedType,
+                props,
+                transforms);
+
+            EditorTextBox.Text = newText;
+            EditorTextBox.CaretIndex = newCaret;
+            EditorTextBox.Focus();
+            _viewModel.RunNow();
+            dialog.Close();
+        };
+
+        cancelButton.Click += (_, _) => dialog.Close();
+
+        await dialog.ShowDialog(this);
+    }
+
+    private string SuggestUniqueLayerName(string layerType)
+    {
+        var baseName = GfxEditorTextHelper.IsValidIdentifier(layerType) ? layerType : "layer";
+        var source = EditorTextBox.Text ?? string.Empty;
+        for (var i = 1; i <= 999; i++)
+        {
+            var candidate = $"{baseName}_{i}";
+            if (!source.Contains(candidate, StringComparison.Ordinal))
+            {
+                return candidate;
+            }
+        }
+
+        return $"{baseName}_new";
+    }
+
+    private static string GetSuggestedRequiredDefault(LayerPropertyDescriptor desc) => desc.Name switch
+    {
+        "text" => "\"Hello\"",
+        "source" => "\"sprite.png\"",
+        "fn" => "\"(u, v) => [u, v, 0.5, 1.0]\"",
+        "shapes" => "[{ shape = \"circle\", x = 0.5, y = 0.5, r = 0.3 }]",
+        _ => string.Empty
+    };
+
+    private static Control CreateSectionHeader(string title, string hexColor) =>
+        new TextBlock
+        {
+            Text = title,
+            FontWeight = FontWeight.Bold,
+            FontSize = 12,
+            Foreground = Brush.Parse(hexColor),
+            Margin = new Thickness(0, 6, 0, 2)
+        };
+
+    private static Control CreateLabeledField(string label, string? description, Control inputControl)
+    {
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("150,*")
+        };
+
+        var labelStack = new StackPanel
+        {
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+
+        var nameText = new TextBlock
+        {
+            Text = label,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12,
+            Foreground = Brush.Parse("#D8D8D8")
+        };
+        ToolTip.SetTip(nameText, description);
+        labelStack.Children.Add(nameText);
+
+        Grid.SetColumn(labelStack, 0);
+        Grid.SetColumn(inputControl, 1);
+        grid.Children.Add(labelStack);
+        grid.Children.Add(inputControl);
+        return grid;
     }
 
     private void WireScrollSync()
@@ -80,10 +793,6 @@ output = {
 
     private void WireFrameNavigation()
     {
-        NewButton.Click += OnNewClicked;
-        OpenButton.Click += OnOpenClicked;
-        SaveButton.Click += OnSaveClicked;
-        SaveAsButton.Click += OnSaveAsClicked;
         FirstButton.Click += (s, e) => _viewModel.FirstFrame();
         PrevButton.Click += (s, e) => _viewModel.PreviousFrame();
         NextButton.Click += (s, e) => _viewModel.NextFrame();
@@ -96,11 +805,6 @@ output = {
         DiagnosticsList.SelectionChanged += (s, e) => OnDiagnosticSelected();
     }
 
-    private void WireSeedTextBox()
-    {
-        SeedTextBox.TextChanged += (s, e) => _viewModel.SeedOverride = SeedTextBox.Text ?? string.Empty;
-    }
-
     private void SyncScroll(ScrollViewer source, ScrollViewer target)
     {
         if (_syncingScroll || source is null || target is null) return;
@@ -109,16 +813,16 @@ output = {
         _syncingScroll = false;
     }
 
-    private void OnNewClicked(object? sender, RoutedEventArgs e)
+    private void OnNewClicked(object? sender, RoutedEventArgs? e)
     {
         StopPlay();
-        SampleComboBox.SelectedItem = null;
-        EditorTextBox.Text = string.Empty;
+        EditorTextBox.Text = DefaultNewScript;
         _viewModel.SourceFilePath = string.Empty;
-        TitleText.Text = "";
+        UpdateTitle("Untitled");
+        _viewModel.RunNow();
     }
 
-    private async void OnOpenClicked(object? sender, RoutedEventArgs e)
+    private async void OnOpenClicked(object? sender, RoutedEventArgs? e)
     {
         try
         {
@@ -145,9 +849,8 @@ output = {
                 try
                 {
                     EditorTextBox.Text = File.ReadAllText(path);
-                    SampleComboBox.SelectedItem = null;
                     _viewModel.SourceFilePath = path;
-                    TitleText.Text = Path.GetFileName(path);
+                    UpdateTitle(Path.GetFileName(path));
                 }
                 catch (Exception ex)
                 {
@@ -161,7 +864,7 @@ output = {
         }
     }
 
-    private async void OnSaveClicked(object? sender, RoutedEventArgs e)
+    private async void OnSaveClicked(object? sender, RoutedEventArgs? e)
     {
         var path = _viewModel.SourceFilePath;
         if (string.IsNullOrWhiteSpace(path))
@@ -173,7 +876,7 @@ output = {
         try
         {
             File.WriteAllText(path, EditorTextBox.Text ?? string.Empty);
-            TitleText.Text = Path.GetFileName(path);
+            UpdateTitle(Path.GetFileName(path));
         }
         catch (Exception ex)
         {
@@ -181,7 +884,7 @@ output = {
         }
     }
 
-    private async void OnSaveAsClicked(object? sender, RoutedEventArgs e) => await SaveAsAsync();
+    private async void OnSaveAsClicked(object? sender, RoutedEventArgs? e) => await SaveAsAsync();
 
     private async Task SaveAsAsync()
     {
@@ -208,7 +911,7 @@ output = {
                 {
                     File.WriteAllText(path, EditorTextBox.Text ?? string.Empty);
                     _viewModel.SourceFilePath = path;
-                    TitleText.Text = Path.GetFileName(path);
+                    UpdateTitle(Path.GetFileName(path));
                 }
                 catch (Exception ex)
                 {
@@ -219,6 +922,117 @@ output = {
         catch (Exception ex)
         {
             await ShowMessageAsync($"Save As failed:\n{ex.Message}", "Save Error");
+        }
+    }
+
+    private async Task ShowSetSeedDialogAsync()
+    {
+        var seedBox = new TextBox
+        {
+            Text = _viewModel.SeedOverride,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 13,
+            Watermark = "e.g. 42 (leave blank for random/document seed)",
+            Margin = new Thickness(0, 4, 0, 16)
+        };
+
+        var okButton = new Button
+        {
+            Content = "OK",
+            MinWidth = 76,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            IsDefault = true
+        };
+        var clearButton = new Button
+        {
+            Content = "Clear",
+            MinWidth = 76,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center
+        };
+        var cancelButton = new Button
+        {
+            Content = "Cancel",
+            MinWidth = 76,
+            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            IsCancel = true
+        };
+
+        var buttonPanel = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 8,
+            Children = { clearButton, cancelButton, okButton }
+        };
+
+        var dialog = new Window
+        {
+            Title = "Set Master Seed Override",
+            Width = 420,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Brush.Parse("#262626"),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Enter a numeric master seed override:",
+                        FontWeight = FontWeight.Bold,
+                        Margin = new Thickness(0, 0, 0, 8),
+                        Foreground = Brush.Parse("#E8E8E8")
+                    },
+                    new TextBlock
+                    {
+                        Text = "Overrides the deterministic master seed used for all procedural layers.",
+                        Foreground = Brush.Parse("#9A9A9A"),
+                        FontSize = 11,
+                        Margin = new Thickness(0, 0, 0, 8)
+                    },
+                    seedBox,
+                    buttonPanel
+                }
+            }
+        };
+
+        okButton.Click += (_, _) =>
+        {
+            _viewModel.SeedOverride = seedBox.Text?.Trim() ?? string.Empty;
+            dialog.Close();
+        };
+
+        clearButton.Click += (_, _) =>
+        {
+            _viewModel.SeedOverride = string.Empty;
+            dialog.Close();
+        };
+
+        cancelButton.Click += (_, _) => dialog.Close();
+
+        await dialog.ShowDialog(this);
+    }
+
+    private void UpdateTitle(string? fileName = null)
+    {
+        var name = !string.IsNullOrWhiteSpace(fileName)
+            ? fileName
+            : (!string.IsNullOrWhiteSpace(_viewModel.SourceFilePath) ? Path.GetFileName(_viewModel.SourceFilePath) : "Untitled");
+
+        var seedSuffix = !string.IsNullOrWhiteSpace(_viewModel.SeedOverride)
+            ? $" [Seed: {_viewModel.SeedOverride}]"
+            : string.Empty;
+
+        Title = $"GfxStudio — {name}{seedSuffix}";
+    }
+
+    private void UpdateRunOnChangeMenu()
+    {
+        if (RunOnChangeMenuItem is not null)
+        {
+            RunOnChangeMenuItem.Header = _viewModel.RunOnChange ? "Run on _Change  ✓" : "Run on _Change";
         }
     }
 
@@ -259,6 +1073,16 @@ output = {
         if (e.PropertyName is nameof(MainViewModel.PreviewData) or nameof(MainViewModel.SelectedFrameIndex))
         {
             UpdatePreviewImage();
+        }
+
+        if (e.PropertyName is nameof(MainViewModel.RunOnChange))
+        {
+            UpdateRunOnChangeMenu();
+        }
+
+        if (e.PropertyName is nameof(MainViewModel.SeedOverride))
+        {
+            UpdateTitle();
         }
     }
 
@@ -468,7 +1292,7 @@ output = {
         };
     }
 
-    private static bool IsKeyword(string identifier) => identifier is "layers" or "output" or "scripts";
+    private static bool IsKeyword(string identifier) => identifier is "layers" or "output" or "scripts" or "variables";
 
     private static bool NextTokenIs(IReadOnlyList<GfxToken> tokens, int index, params GfxTokenKind[] kinds) =>
         index + 1 < tokens.Count && kinds.Contains(tokens[index + 1].Kind);
@@ -545,17 +1369,19 @@ output = {
         if (_samplePaths.TryGetValue(initialSample, out var samplePath))
         {
             LoadSampleScript(samplePath);
-            SampleComboBox.SelectedItem = initialSample;
             return;
         }
 
         EditorTextBox.Text = FallbackGfx;
         _viewModel.SourceFilePath = string.Empty;
-        TitleText.Text = "Untitled";
+        UpdateTitle("Untitled");
     }
 
     private void PopulateSamples()
     {
+        _samplePaths.Clear();
+        LoadSampleMenuItem.Items.Clear();
+
         var directories = new[]
         {
             Path.Combine(AppContext.BaseDirectory, "samples"),
@@ -571,19 +1397,13 @@ output = {
 
         foreach (var path in files)
         {
-            _samplePaths[Path.GetFileName(path)] = path;
-        }
+            var fileName = Path.GetFileName(path);
+            _samplePaths[fileName] = path;
 
-        SampleComboBox.ItemsSource = _samplePaths.Keys.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray();
-    }
-
-    private void OnSampleSelected(object? sender, SelectionChangedEventArgs e)
-    {
-        if (SampleComboBox.SelectedItem is string selectedName &&
-            _samplePaths.TryGetValue(selectedName, out var path) &&
-            !string.Equals(_viewModel.SourceFilePath, path, StringComparison.OrdinalIgnoreCase))
-        {
-            LoadSampleScript(path);
+            var item = new MenuItem { Header = fileName };
+            var localPath = path;
+            item.Click += (s, e) => LoadSampleScript(localPath);
+            LoadSampleMenuItem.Items.Add(item);
         }
     }
 
@@ -591,6 +1411,6 @@ output = {
     {
         EditorTextBox.Text = File.ReadAllText(path);
         _viewModel.SourceFilePath = path;
-        TitleText.Text = Path.GetFileName(path);
+        UpdateTitle(Path.GetFileName(path));
     }
 }

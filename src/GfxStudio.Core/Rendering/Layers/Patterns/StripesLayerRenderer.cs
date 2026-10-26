@@ -13,7 +13,7 @@ public sealed class StripesLayerRenderer : ILayerRenderer
     public string LayerType => "stripes";
 
     public IReadOnlyCollection<string> SupportedProperties =>
-        ["stripe_width", "width", "angle", "color1", "color2", "color", "background"];
+        ["stripe_width", "width", "angle", "color1", "color2", "color", "background", "phase", "pattern_offset", "phase_offset"];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
     {
@@ -22,8 +22,15 @@ public sealed class StripesLayerRenderer : ILayerRenderer
         var bitmap = context.CreateLayerBitmap();
         var stripeWidth = ResolvePositiveDouble(context, "stripe_width", "width", defaultValue: 8.0);
         var angleDeg = ResolveDouble(context, "angle", defaultValue: 45.0);
+        var phase = ResolveDouble(context, "phase", defaultValue: 0.0);
+        var (offsetX, offsetY) = ResolvePatternOffset(context);
         var color1 = CheckerboardLayerRenderer.ResolveColor(context, "color1", ColorRgba.White);
         var color2 = CheckerboardLayerRenderer.ResolveColor(context, "color2", ColorRgba.Black);
+        if (!context.LayerProperties.Properties.ContainsKey("color2")
+            && context.LayerProperties.Properties.ContainsKey("background"))
+        {
+            color2 = CheckerboardLayerRenderer.ResolveColor(context, "background", ColorRgba.Black);
+        }
 
         ColorRamp? ramp = null;
         if (context.LayerProperties.TryGetProperty("color", out var colorVal))
@@ -46,6 +53,7 @@ public sealed class StripesLayerRenderer : ILayerRenderer
         var cosA = Math.Cos(angleRad);
         var sinA = Math.Sin(angleRad);
         var period = stripeWidth * 2.0;
+        var phaseShift = phase * period;
 
         var width = bitmap.Width;
         var height = bitmap.Height;
@@ -53,10 +61,12 @@ public sealed class StripesLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
+            var sy = y - offsetY;
             var rowOffset = y * width * 4;
             for (var x = 0; x < width; x++)
             {
-                var proj = (x * cosA) + (y * sinA);
+                var sx = x - offsetX;
+                var proj = (sx * cosA) + (sy * sinA) - phaseShift;
                 ColorRgba sampled;
                 if (ramp is not null)
                 {
@@ -76,6 +86,37 @@ public sealed class StripesLayerRenderer : ILayerRenderer
 
         Marshal.Copy(pixelBuffer, 0, bitmap.GetPixels(), pixelBuffer.Length);
         return bitmap;
+    }
+
+    internal static (double X, double Y) ResolvePatternOffset(LayerRenderContext context)
+    {
+        var propName = "pattern_offset";
+        if (!context.LayerProperties.TryGetProperty("pattern_offset", out var val))
+        {
+            if (context.LayerProperties.TryGetProperty("phase_offset", out val))
+            {
+                propName = "phase_offset";
+            }
+            else
+            {
+                return (0.0, 0.0);
+            }
+        }
+
+        if (val.TryCoerceToPoint2D(out var pt) && float.IsFinite(pt.X) && float.IsFinite(pt.Y))
+        {
+            return (pt.X, pt.Y);
+        }
+
+        if (val is GfxNumber num && double.IsFinite(num.Value))
+        {
+            return (num.Value, num.Value);
+        }
+
+        context.AddDiagnostic(
+            "RND014",
+            $"Property '{propName}' on layer '{context.LayerId}' must be an object '{{ x = <number>, y = <number> }}' or finite number.");
+        return (0.0, 0.0);
     }
 
     internal static double ResolveDouble(LayerRenderContext context, string propName, double defaultValue)

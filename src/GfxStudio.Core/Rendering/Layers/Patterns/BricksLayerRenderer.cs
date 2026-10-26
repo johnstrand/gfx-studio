@@ -29,7 +29,9 @@ public sealed class BricksLayerRenderer : ILayerRenderer
         "color_variation",
         "variation",
         "color",
-        "background"
+        "background",
+        "pattern_offset",
+        "phase_offset"
     ];
 
     public SKBitmap RenderLayer(LayerRenderContext context)
@@ -51,6 +53,7 @@ public sealed class BricksLayerRenderer : ILayerRenderer
         var rowOffset = ResolveDouble(context, "row_offset", null, defaultValue: defaultOffset);
         var bevel = Math.Clamp(ResolveDouble(context, "bevel", null, defaultValue: 0.15), 0.0, 1.0);
         var variation = Math.Clamp(ResolveDouble(context, "color_variation", "variation", defaultValue: 0.12), 0.0, 1.0);
+        var (offsetX, offsetY) = StripesLayerRenderer.ResolvePatternOffset(context);
 
         var baseColor = new ColorRgba(178, 76, 52, 255);
         ColorRamp? colorRamp = null;
@@ -67,6 +70,12 @@ public sealed class BricksLayerRenderer : ILayerRenderer
         }
 
         var mortarColor = CheckerboardLayerRenderer.ResolveColor(context, "mortar_color", new ColorRgba(210, 206, 198, 255));
+        if (!context.LayerProperties.Properties.ContainsKey("mortar_color")
+            && context.LayerProperties.Properties.ContainsKey("background"))
+        {
+            mortarColor = CheckerboardLayerRenderer.ResolveColor(context, "background", mortarColor);
+        }
+
         var layerSeed = unchecked((ulong)(context.Random.NextDouble() * ulong.MaxValue));
 
         var width = bitmap.Width;
@@ -76,9 +85,11 @@ public sealed class BricksLayerRenderer : ILayerRenderer
 
         for (var y = 0; y < height; y++)
         {
+            var sy = y - offsetY;
             var rowIdx = y * width * 4;
             for (var x = 0; x < width; x++)
             {
+                var sx = x - offsetX;
                 int brickIdX, brickIdY;
                 double distToEdgeX, distToEdgeY, curBrickW, curBrickH;
 
@@ -86,14 +97,14 @@ public sealed class BricksLayerRenderer : ILayerRenderer
                 {
                     // 45-degree rotated herringbone step grid
                     var unit = brickH;
-                    var u = (x + y) / Math.Sqrt(2.0);
-                    var v = (y - x + 10000.0) / Math.Sqrt(2.0);
+                    var u = (sx + sy) / Math.Sqrt(2.0);
+                    var v = (sy - sx + 10000.0) / Math.Sqrt(2.0);
                     var gu = (int)Math.Floor(u / unit);
                     var gv = (int)Math.Floor(v / unit);
                     var parity = ((gu + gv) & 1) == 0;
                     if (parity)
                     {
-                        brickIdX = gu / 2;
+                        brickIdX = (int)Math.Floor(gu / 2.0);
                         brickIdY = gv;
                         var localU = u - (brickIdX * 2 * unit);
                         var localV = v - (gv * unit);
@@ -105,7 +116,7 @@ public sealed class BricksLayerRenderer : ILayerRenderer
                     else
                     {
                         brickIdX = gu;
-                        brickIdY = gv / 2;
+                        brickIdY = (int)Math.Floor(gv / 2.0);
                         var localU = u - (gu * unit);
                         var localV = v - (brickIdY * 2 * unit);
                         curBrickW = unit;
@@ -116,9 +127,9 @@ public sealed class BricksLayerRenderer : ILayerRenderer
                 }
                 else
                 {
-                    brickIdY = (int)Math.Floor(y / brickH);
-                    var localY = y - (brickIdY * brickH);
-                    var xShifted = x + (brickIdY * rowOffset * brickW);
+                    brickIdY = (int)Math.Floor(sy / brickH);
+                    var localY = sy - (brickIdY * brickH);
+                    var xShifted = sx + (brickIdY * rowOffset * brickW);
                     brickIdX = (int)Math.Floor(xShifted / brickW);
                     var localX = xShifted - (brickIdX * brickW);
                     curBrickW = brickW;
