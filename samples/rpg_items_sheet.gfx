@@ -1,0 +1,75 @@
+scripts = {
+  items = "scripts/rpg_items.js"
+}
+
+layers = {
+  // 1. Dark inventory slot background with beveled border
+  slot_bg = {
+    type = rect
+    size = output.dimensions
+    fill_color = rgb(20, 22, 34)
+    stroke_color = rgb(45, 50, 72)
+    stroke_width = 1.5
+    corner_radius = 4
+  }
+
+  // 2. Ambient radial glow matching the item type
+  aura = {
+    type = circle
+    center = output.dimensions / 2
+    radius = 16
+    fill_color = items.getItemGlow(run.index)
+    blur = 4
+  }
+
+  // 3. Faceted gem/emblem base polygon
+  emblem = {
+    type = polygon
+    center = output.dimensions / 2
+    sides = (run.index % 4) + 4
+    radius = 14
+    fill_color = items.getItemColor(run.index)
+    stroke_color = rgba(255, 255, 255, 180)
+    stroke_width = 1.5
+    rotation = (run.index * 45) % 360
+    bevel = { depth = 2, angle = 135, intensity = 0.5 }
+    outline = { width = 1, color = rgb(10, 12, 18) }
+    drop_shadow = { offset = { x = 1.5, y = 2 }, blur = 2, color = rgba(0, 0, 0, 160) }
+  }
+
+  // 4. Centered item icon glyph
+  glyph = {
+    type = text
+    size = output.dimensions
+    text = items.getItemGlyph(run.index)
+    color = rgb(255, 255, 255)
+    font_size = 14
+    font_weight = bold
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.CENTER }
+    drop_shadow = { offset = { x = 1, y = 1 }, color = rgba(0, 0, 0, 200) }
+  }
+
+  // 5. Tier / Rarity badge in the corner
+  tier = {
+    type = text
+    size = { width = output.dimensions.width, height = 16 }
+    offset = { x = 4, y = 3 }
+    text = items.getItemTier(run.index)
+    color = rgb(250, 204, 21)
+    font_size = 8
+    font_weight = bold
+    align = { vertical: ALIGN.TOP, horizontal: ALIGN.LEFT }
+  }
+}
+
+output = {
+  mode = image_map
+  dimensions = { width = 48, height = 48 }
+  count = 16
+  columns = 4
+  padding = 4
+  spacing = 4
+  background = rgb(11, 13, 20)
+  filename = "rpg_items_sheet.png"
+  metadata_filename = "rpg_items_sheet.json"
+}

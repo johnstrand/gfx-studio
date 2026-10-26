@@ -1,0 +1,159 @@
+// Sacred Geometry Mandala Generator
+// Demonstrates layer copying (copy), rotation, transform scaling, vector arithmetic, and bloom/vignette filters.
+
+center_pt = output.dimensions / 2
+petal_size = { width = 32, height = 360 }
+petal_offset = (output.dimensions - petal_size) / 2
+
+layers = {
+  // ==========================================
+  // 1. COSMIC BACKGROUND
+  // ==========================================
+  bg_fill = {
+    type = fill
+    color = rgb(8, 10, 20)
+  }
+
+  bg_nebula = {
+    type = fractal_clouds
+    size = output.dimensions
+    scale = 3.0
+    octaves = 4
+    color = color_ramp(rgba(76, 29, 149, 110), rgba(219, 39, 119, 35))
+    mix = screen
+  }
+
+  bg_starlight = {
+    type = dots
+    size = output.dimensions
+    spacing = 28
+    radius = 1.2
+    color = rgba(255, 255, 255, 50)
+    mix = screen
+  }
+
+  // ==========================================
+  // 2. CELESTIAL RINGS
+  // ==========================================
+  outer_ring_1 = {
+    type = circle
+    center = center_pt
+    radius = 210
+    stroke_color = rgba(192, 132, 252, 120)
+    stroke_width = 1.5
+  }
+
+  outer_ring_2 = {
+    copy = outer_ring_1
+    radius = 195
+    stroke_color = rgba(147, 197, 253, 90)
+    stroke_width = 1.0
+  }
+
+  // ==========================================
+  // 3. ROTATED PETAL / BEAM ARRAY (using copy + rotation)
+  // ==========================================
+  petal_0 = {
+    type = rect
+    offset = petal_offset
+    size = petal_size
+    corner_radius = 14
+    fill_color = rgba(59, 130, 246, 22)
+    stroke_color = rgba(147, 197, 253, 160)
+    stroke_width = 1.5
+    rotation = 0
+    mix = screen
+  }
+
+  petal_30  = { copy = petal_0, rotation = 30 }
+  petal_60  = { copy = petal_0, rotation = 60 }
+  petal_90  = { copy = petal_0, rotation = 90 }
+  petal_120 = { copy = petal_0, rotation = 120 }
+  petal_150 = { copy = petal_0, rotation = 150 }
+
+  // ==========================================
+  // 4. INTERLACING DIAMOND STARS
+  // ==========================================
+  diamond_base = {
+    type = polygon
+    center = center_pt
+    sides = 4
+    radius = 135
+    fill_color = rgba(236, 72, 153, 18)
+    stroke_color = rgba(244, 114, 182, 180)
+    stroke_width = 1.5
+    rotation = 45
+    mix = screen
+  }
+
+  diamond_90 = {
+    copy = diamond_base
+    rotation = 90
+  }
+
+  diamond_inner = {
+    copy = diamond_base
+    radius = 85
+    fill_color = rgba(245, 158, 11, 25)
+    stroke_color = rgba(251, 191, 36, 210)
+    rotation = 0
+  }
+
+  diamond_inner_45 = {
+    copy = diamond_inner
+    rotation = 45
+  }
+
+  // ==========================================
+  // 5. SOLAR CORE (STAR + INNER RAYS)
+  // ==========================================
+  sun_rays = {
+    type = star
+    center = center_pt
+    sides = 12
+    radius = 52
+    inner_radius = 28
+    fill_color = rgb(253, 224, 71)
+    stroke_color = rgb(255, 255, 255)
+    stroke_width = 1.5
+    bevel = { depth = 2, angle = 135, intensity = 0.6 }
+  }
+
+  sun_rays_rot = {
+    copy = sun_rays
+    rotation = 15
+    transform_scale = 0.82
+    fill_color = rgb(245, 158, 11)
+  }
+
+  sun_core = {
+    type = circle
+    center = center_pt
+    radius = 16
+    fill_color = rgb(255, 255, 255)
+    blur = 2
+  }
+
+  // ==========================================
+  // 6. POST-PROCESSING (BLOOM + VIGNETTE)
+  // ==========================================
+  post_bloom = {
+    type = bloom
+    intensity = 0.65
+    threshold = 0.52
+    radius = 8
+  }
+
+  post_vignette = {
+    type = vignette
+    strength = 0.72
+    radius = 0.82
+    softness = 0.45
+  }
+}
+
+output = {
+  mode = single
+  dimensions = { width = 512, height = 512 }
+  filename = "sacred_geometry_mandala.png"
+}

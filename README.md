@@ -126,6 +126,27 @@ gfx render samples/seeded_variations.gfx --output-dir ./output_seeded
 gfx render samples/seeded_variations.gfx --seed 7 --output-dir ./output_seeded_alt
 ```
 
+### 10. Procedural RPG Item Sprite Sheet (`samples/rpg_items_sheet.gfx`)
+Generates a 16-item inventory sprite sheet (potions, scrolls, runes, weapons) alongside JSON atlas metadata using `mode = image_map`, JavaScript metadata functions from `samples/scripts/rpg_items.js`, beveled polygon emblems, and drop shadows:
+
+```bash
+gfx render samples/rpg_items_sheet.gfx --output-dir ./output_rpg
+```
+
+### 11. PBR Texture Maps Suite (`samples/pbr_material_maps.gfx`)
+Generates a 4-channel material map sheet showcasing Albedo/Diffuse, Height/Bump, Tangent-Space Normal (`normal_map`), and Roughness/AO using procedural bricks, organic weathering, and extensive layer copying (`copy`):
+
+```bash
+gfx render samples/pbr_material_maps.gfx --output-dir ./output_pbr
+```
+
+### 12. Sacred Geometry Mandala (`samples/sacred_geometry_mandala.gfx`)
+Generates a symmetrical cosmic mandala demonstrating dimension vector arithmetic (`center_pt = output.dimensions / 2`), radiant petal copying with incremental rotations (`copy` + `rotation`), nested polygon stars, and bloom/vignette filters:
+
+```bash
+gfx render samples/sacred_geometry_mandala.gfx --output-dir ./output_mandala
+```
+
 ---
 
 ## Embedding in C# / .NET

@@ -1,0 +1,144 @@
+// PBR Material Maps Generator (Albedo, Height, Tangent Normal, Roughness)
+// Demonstrates procedural bricks, organic weathering, normal_map filter, and layer copying.
+
+layers = {
+  // ==========================================
+  // CHANNEL 1: ALBEDO / DIFFUSE (X: 0..256)
+  // ==========================================
+  albedo_bricks = {
+    type = bricks
+    size = { width = 256, height = 256 }
+    offset = { x = 0, y = 0 }
+    brick_width = 64
+    brick_height = 32
+    mortar_width = 4
+    mortar_color = rgb(38, 38, 42)
+    color = rgb(140, 115, 95)
+    color_variation = 0.22
+    bevel = 1.8
+    warp = { strength = 2.0, scale = 12.0 }
+  }
+
+  albedo_weathering = {
+    type = fractal_clouds
+    size = { width = 256, height = 256 }
+    offset = { x = 0, y = 0 }
+    scale = 4.0
+    octaves = 4
+    color = color_ramp(rgba(0, 0, 0, 140), rgba(255, 255, 255, 40))
+    mix = multiply
+  }
+
+  albedo_moss = {
+    type = worley
+    size = { width = 256, height = 256 }
+    offset = { x = 0, y = 0 }
+    scale = 8.0
+    color = color_ramp(rgba(45, 120, 50, 160), rgba(0, 0, 0, 0))
+    mix = overlay
+  }
+
+  // ==========================================
+  // CHANNEL 2: HEIGHT / BUMP (X: 256..512)
+  // ==========================================
+  height_bricks = {
+    copy = albedo_bricks
+    offset = { x = 256, y = 0 }
+    color = rgb(215, 215, 215)
+    mortar_color = rgb(15, 15, 15)
+    color_variation = 0.08
+    bevel = 2.5
+  }
+
+  height_micro_bump = {
+    type = perlin
+    size = { width = 256, height = 256 }
+    offset = { x = 256, y = 0 }
+    scale = 16.0
+    color = color_ramp(rgba(0, 0, 0, 50), rgba(255, 255, 255, 50))
+    mix = overlay
+  }
+
+  // ==========================================
+  // CHANNEL 3: TANGENT-SPACE NORMAL (X: 512..768)
+  // ==========================================
+  normal_map_layer = {
+    copy = height_bricks
+    offset = { x = 512, y = 0 }
+    normal_map = { strength = 3.5 }
+  }
+
+  // ==========================================
+  // CHANNEL 4: ROUGHNESS & AO (X: 768..1024)
+  // ==========================================
+  roughness_layer = {
+    copy = albedo_bricks
+    offset = { x = 768, y = 0 }
+    color = rgb(175, 175, 175)
+    mortar_color = rgb(250, 250, 250)
+    color_variation = 0.12
+    emboss = 1.0
+  }
+
+  // ==========================================
+  // PRESENTATION CHROME & LABELS
+  // ==========================================
+  label_bar = {
+    type = rect
+    offset = { x = 0, y = 256 }
+    size = { width = 1024, height = 24 }
+    fill_color = rgb(15, 17, 24)
+  }
+
+  divider_1 = {
+    type = rect
+    offset = { x = 255, y = 0 }
+    size = { width = 2, height = 280 }
+    fill_color = rgb(10, 12, 16)
+  }
+
+  divider_2 = {
+    copy = divider_1
+    offset = { x = 511, y = 0 }
+  }
+
+  divider_3 = {
+    copy = divider_1
+    offset = { x = 767, y = 0 }
+  }
+
+  lbl_albedo = {
+    type = text
+    offset = { x = 12, y = 258 }
+    size = { width = 232, height = 20 }
+    text = "1. ALBEDO / DIFFUSE"
+    color = rgb(226, 232, 240)
+    font_size = 11
+    font_weight = bold
+    align = { vertical: ALIGN.CENTER, horizontal: ALIGN.LEFT }
+  }
+
+  lbl_height = {
+    copy = lbl_albedo
+    offset = { x = 268, y = 258 }
+    text = "2. HEIGHT / BUMP"
+  }
+
+  lbl_normal = {
+    copy = lbl_albedo
+    offset = { x = 524, y = 258 }
+    text = "3. TANGENT NORMAL"
+  }
+
+  lbl_rough = {
+    copy = lbl_albedo
+    offset = { x = 780, y = 258 }
+    text = "4. ROUGHNESS & AO"
+  }
+}
+
+output = {
+  mode = single
+  dimensions = { width = 1024, height = 280 }
+  filename = "pbr_material_maps.png"
+}
