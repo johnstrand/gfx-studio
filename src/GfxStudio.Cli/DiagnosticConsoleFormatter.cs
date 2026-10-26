@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 using GfxStudio.Core.Diagnostics;
 
 namespace GfxStudio.Cli;
@@ -48,7 +48,7 @@ public static partial class DiagnosticConsoleFormatter
             return null;
         }
 
-        var misspelled = match.Groups[1].Value;
+        var misspelled = !string.IsNullOrEmpty(match.Groups[1].Value) ? match.Groups[1].Value : match.Groups[2].Value;
         var matchName = knownNames
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Select(name => (Name: name, Distance: LevenshteinDistance(misspelled, name)))
@@ -80,6 +80,6 @@ public static partial class DiagnosticConsoleFormatter
         return previous[right.Length];
     }
 
-    [GeneratedRegex("(?:Undefined (?:object or namespace|identifier)|Unknown function) '([^']+)'", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("(?:Undefined (?:object or namespace|identifier)|Unknown function) '([^']+)'|Property '([^']+)' does not exist", RegexOptions.CultureInvariant)]
     private static partial Regex UnknownNameRegex();
 }

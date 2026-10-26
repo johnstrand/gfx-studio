@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using GfxStudio.Core.Diagnostics;
 using GfxStudio.Core.Parsing;
 using GfxStudio.Core.Parsing.Ast;
@@ -48,6 +48,12 @@ public sealed class GfxEvaluator
                 }
 
                 _rootAstProperties[prop.Name] = prop;
+            }
+
+            if (_rootAstProperties.TryGetValue("variables", out var variablesProp)
+                && variablesProp.Value is not ObjectBlockExpr)
+            {
+                AddDiagnostic("EVAL011", "Top-level 'variables' property must be an object block.", variablesProp.Span);
             }
 
             if (_rootAstProperties.TryGetValue("layers", out var layersNode)
@@ -154,7 +160,8 @@ public sealed class GfxEvaluator
         RunContext run = default,
         FrameContext frame = default,
         IEnumerable<IGfxCallable>? functions = null,
-        string filePath = "<memory>")
+        string filePath = "<memory>",
+        IReadOnlyDictionary<string, GfxValue>? variables = null)
     {
         var parseResult = GfxParser.Parse(source, filePath);
         if (parseResult.HasErrors || parseResult.Document is null)
@@ -163,6 +170,14 @@ public sealed class GfxEvaluator
         }
 
         var context = new EvaluationContext(parseResult.Document, run, frame, functions: functions);
+        if (variables is not null)
+        {
+            foreach (var (k, v) in variables)
+            {
+                context.SetVariable(k, v);
+            }
+        }
+
         var evaluator = new GfxEvaluator(context);
         return evaluator.EvaluateDocument();
     }
@@ -180,7 +195,15 @@ public sealed class GfxEvaluator
             }
         }
 
-        var rootObject = CoerceObjectIfApplicable(new GfxObject(props, _rootOrderedKeys.AsReadOnly()));
+        var orderedKeys = _rootOrderedKeys.ToList();
+        if (_context.Variables.Count > 0 && !props.ContainsKey("variables"))
+        {
+            var synthesizedVars = new GfxObject(_context.Variables, _context.Variables.Keys.ToList().AsReadOnly());
+            props["variables"] = synthesizedVars;
+            orderedKeys.Add("variables");
+        }
+
+        var rootObject = CoerceObjectIfApplicable(new GfxObject(props, orderedKeys.AsReadOnly()));
         return new EvaluationResult<GfxObject>((GfxObject)rootObject, _diagnostics.AsReadOnly());
     }
 
@@ -222,6 +245,16 @@ public sealed class GfxEvaluator
         if (segments.Length == 0)
         {
             return null;
+        }
+
+        if (segments.Length == 2 && segments[0] == "variables" && _context.Variables.TryGetValue(segments[1], out var varOverride))
+        {
+            return varOverride;
+        }
+
+        if (segments.Length == 1 && segments[0] == "variables" && !_rootAstProperties.ContainsKey("variables") && _context.Variables.Count > 0)
+        {
+            return new GfxObject(_context.Variables, _context.Variables.Keys.ToList().AsReadOnly());
         }
 
         if (!_rootAstProperties.TryGetValue(segments[0], out var currentPropNode))
@@ -293,6 +326,22 @@ public sealed class GfxEvaluator
             return cached;
         }
 
+        if (fullPath == "variables" && node.Value is not ObjectBlockExpr)
+        {
+            if (!_diagnostics.Any(d => d.Code == "EVAL011"))
+            {
+                AddDiagnostic("EVAL011", "Top-level 'variables' property must be an object block.", node.Span);
+            }
+            return null;
+        }
+
+        if (fullPath.StartsWith("variables.", StringComparison.Ordinal)
+            && _context.Variables.TryGetValue(node.Name, out var overrideVal))
+        {
+            _resolvedPathCache[fullPath] = overrideVal;
+            return overrideVal;
+        }
+
         if (!_activePaths.Add(fullPath))
         {
             var cycleStartIndex = _evaluationStack.IndexOf(fullPath);
@@ -345,6 +394,15 @@ public sealed class GfxEvaluator
             var finalValue = isCallbackProperty
                 ? rawValue
                 : UnwrapPropertyValue(rawValue, node.Span);
+
+            if (fullPath == "variables" && finalValue is not GfxObject)
+            {
+                if (!_diagnostics.Any(d => d.Code == "EVAL011"))
+                {
+                    AddDiagnostic("EVAL011", "Top-level 'variables' property must be an object block.", node.Span);
+                }
+                return null;
+            }
 
             if (hasLayerPath
                 && layerPropertyPath == "seed"
@@ -528,6 +586,19 @@ public sealed class GfxEvaluator
             props[prop.Name] = val;
         }
 
+        if (currentPathPrefix == "variables")
+        {
+            foreach (var (k, v) in _context.Variables)
+            {
+                if (!props.ContainsKey(k))
+                {
+                    keys.Add(k);
+                    props[k] = v;
+                    _resolvedPathCache[$"variables.{k}"] = v;
+                }
+            }
+        }
+
         return CoerceObjectIfApplicable(new GfxObject(props, keys.AsReadOnly()));
     }
 
@@ -563,7 +634,21 @@ public sealed class GfxEvaluator
             return ResolvePropertyPath(name, identifier.Span);
         }
 
-        // 4. Shorthand `t` for frame.progress if not defined as a top-level property
+        // 4. Synthesized variables object if only CLI/context overrides were provided and variables is not in AST
+        if (name == "variables" && _context.Variables.Count > 0)
+        {
+            return new GfxObject(_context.Variables, _context.Variables.Keys.ToList().AsReadOnly());
+        }
+
+        // 5. Properties declared inside the top-level variables = { ... } block
+        if (_rootAstProperties.TryGetValue("variables", out var variablesNode)
+            && variablesNode.Value is ObjectBlockExpr variablesBlock
+            && variablesBlock.Properties.Any(p => string.Equals(p.Name, name, StringComparison.Ordinal)))
+        {
+            return ResolvePropertyPath($"variables.{name}", identifier.Span);
+        }
+
+        // 6. Shorthand `t` for frame.progress if not defined as a top-level property
         if (name == "t" && !isMemberTarget)
         {
             return new GfxNumber(_context.Frame.Progress);

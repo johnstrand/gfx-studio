@@ -1,4 +1,4 @@
-using GfxStudio.Core.Diagnostics;
+﻿using GfxStudio.Core.Diagnostics;
 using GfxStudio.Core.Evaluation;
 using GfxStudio.Core.Parsing.Ast;
 using GfxStudio.Core.Primitives;
@@ -59,7 +59,15 @@ public sealed class OutputConfigBinder
             }
         }
         var initialRun = new RunContext(0, 1, 0);
-        var evaluator = new GfxEvaluator(new EvaluationContext(document, initialRun, new FrameContext(0, 1, 15.0)));
+        var bindContext = new EvaluationContext(document, initialRun, new FrameContext(0, 1, 15.0));
+        if (options.VariableOverrides is not null)
+        {
+            foreach (var (k, v) in options.VariableOverrides)
+            {
+                bindContext.SetVariable(k, v);
+            }
+        }
+        var evaluator = new GfxEvaluator(bindContext);
 
         var dimensionsValue = EvaluateIfDeclared(document, evaluator, "output.dimensions");
         if (dimensionsValue is null || !dimensionsValue.TryCoerceToDimensions(out var dimensions))

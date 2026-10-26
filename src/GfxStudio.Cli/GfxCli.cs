@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -34,7 +34,11 @@ public static partial class GfxCli
         var watchOption = new Option<bool>(["--watch", "-w"], "Re-render this project whenever it or a referenced JavaScript file changes.");
         var jobsOption = new Option<int?>("--jobs", "Maximum parallel render workers.");
         var startIndexOption = new Option<int?>("--start-index", "First run index.");
-        var metadataOption = new Option<string?>("--atlas-metadata", "Image-map metadata JSON filename.");
+var metadataOption = new Option<string?>("--atlas-metadata", "Image-map metadata JSON filename.");
+        var varOption = new Option<string[]>(["--var", "-v"], "Variable override in key=value format (repeatable).")
+        {
+            AllowMultipleArgumentsPerToken = true
+        };
 
         var render = new Command("render", "Render one or more output artifacts.");
         render.AddArgument(fileArgument);
@@ -48,10 +52,17 @@ public static partial class GfxCli
         render.AddOption(jobsOption);
         render.AddOption(startIndexOption);
         render.AddOption(metadataOption);
+        render.AddOption(varOption);
         render.SetHandler(async context =>
         {
             var parse = context.ParseResult;
             var path = parse.GetValueForArgument(fileArgument);
+            if (!TryParseVariableOverrides(parse.GetValueForOption(varOption), out var varOverrides, out var varError))
+            {
+                Console.Error.WriteLine(varError);
+                context.ExitCode = 2;
+                return;
+            }
             var outputDirectory = parse.GetValueForOption(outputDirectoryOption) ?? Environment.CurrentDirectory;
             var modeText = parse.GetValueForOption(modeOption);
             OutputMode? mode = null;
@@ -77,7 +88,8 @@ public static partial class GfxCli
                 FpsOverride = parse.GetValueForOption(fpsOption),
                 MaxDegreeOfParallelism = parse.GetValueForOption(jobsOption),
                 StartIndexOverride = parse.GetValueForOption(startIndexOption),
-                AtlasMetadataFilename = parse.GetValueForOption(metadataOption)
+                AtlasMetadataFilename = parse.GetValueForOption(metadataOption),
+                VariableOverrides = varOverrides
             };
 
             var watch = parse.GetValueForOption(watchOption);
@@ -89,11 +101,20 @@ public static partial class GfxCli
         var validate = new Command("validate", "Parse and validate .gfx expressions and layer properties without writing output images.");
         validate.AddArgument(fileArgument);
         validate.AddOption(seedOption);
+        validate.AddOption(varOption);
         validate.SetHandler(context =>
         {
+            if (!TryParseVariableOverrides(context.ParseResult.GetValueForOption(varOption), out var varOverrides, out var varError))
+            {
+                Console.Error.WriteLine(varError);
+                context.ExitCode = 2;
+                return;
+            }
+
             context.ExitCode = ValidateFile(
                 context.ParseResult.GetValueForArgument(fileArgument),
-                context.ParseResult.GetValueForOption(seedOption));
+                context.ParseResult.GetValueForOption(seedOption),
+                varOverrides);
         });
 
         var inspect = new Command("inspect", "Print the resolved output configuration and ordered layers.");
@@ -101,12 +122,21 @@ public static partial class GfxCli
         inspect.AddArgument(fileArgument);
         inspect.AddOption(seedOption);
         inspect.AddOption(inspectJsonOption);
+        inspect.AddOption(varOption);
         inspect.SetHandler(context =>
         {
+            if (!TryParseVariableOverrides(context.ParseResult.GetValueForOption(varOption), out var varOverrides, out var varError))
+            {
+                Console.Error.WriteLine(varError);
+                context.ExitCode = 2;
+                return;
+            }
+
             context.ExitCode = InspectFile(
                 context.ParseResult.GetValueForArgument(fileArgument),
                 context.ParseResult.GetValueForOption(seedOption),
-                context.ParseResult.GetValueForOption(inspectJsonOption));
+                context.ParseResult.GetValueForOption(inspectJsonOption),
+                varOverrides);
         });
 
         var format = new Command("format", "Format a .gfx file in-place using GfxFormatter (or verify formatting with --check).");
@@ -237,7 +267,7 @@ public static partial class GfxCli
         return result.HasErrors ? 1 : 0;
     }
 
-    private static int ValidateFile(string filePath, ulong? seedOverride)
+    private static int ValidateFile(string filePath, ulong? seedOverride, IReadOnlyDictionary<string, GfxValue>? variableOverrides = null)
     {
         if (!TryReadSource(filePath, out var fullPath, out var source))
         {
@@ -251,11 +281,11 @@ public static partial class GfxCli
             return 1;
         }
 
-        var options = new RenderOptions { SeedOverride = seedOverride };
+        var options = new RenderOptions { SeedOverride = seedOverride, VariableOverrides = variableOverrides };
         var binder = new OutputConfigBinder().Bind(parseResult.Document, fullPath, options);
         var masterSeed = seedOverride ?? binder.Config?.Seed ?? 0UL;
         var seedProvider = new DeterministicSeedProvider(masterSeed);
-        var context = CreateEvaluationContext(parseResult.Document, seedProvider, 0, 1, 0, 1, binder.Config?.Fps ?? 15.0);
+        var context = CreateEvaluationContext(parseResult.Document, seedProvider, 0, 1, 0, 1, binder.Config?.Fps ?? 15.0, variableOverrides);
         var evaluation = new GfxEvaluator(context, seedProvider).EvaluateDocument();
         var diagnostics = parseResult.Diagnostics.Concat(binder.Diagnostics).Concat(evaluation.Diagnostics).ToList();
 
@@ -275,7 +305,7 @@ public static partial class GfxCli
         return 0;
     }
 
-    private static int InspectFile(string filePath, ulong? seedOverride, bool json)
+    private static int InspectFile(string filePath, ulong? seedOverride, bool json, IReadOnlyDictionary<string, GfxValue>? variableOverrides = null)
     {
         if (!TryReadSource(filePath, out var fullPath, out var source))
         {
@@ -289,7 +319,7 @@ public static partial class GfxCli
             return 1;
         }
 
-        var options = new RenderOptions { SeedOverride = seedOverride };
+        var options = new RenderOptions { SeedOverride = seedOverride, VariableOverrides = variableOverrides };
         var bindResult = new OutputConfigBinder().Bind(parseResult.Document, fullPath, options);
         if (bindResult.Config is null || bindResult.HasErrors)
         {
@@ -301,7 +331,7 @@ public static partial class GfxCli
         var masterSeed = seedOverride ?? config.Seed ?? 0UL;
         var seedProvider = new DeterministicSeedProvider(masterSeed);
         var evaluation = new GfxEvaluator(
-            CreateEvaluationContext(parseResult.Document, seedProvider, 0, config.Count, 0, config.Count, config.Fps),
+            CreateEvaluationContext(parseResult.Document, seedProvider, 0, config.Count, 0, config.Count, config.Fps, variableOverrides),
             seedProvider).EvaluateDocument();
         if (evaluation.HasErrors || evaluation.Value is null)
         {
@@ -513,12 +543,21 @@ public static partial class GfxCli
     {
         var parse = GfxParser.Parse(source, sourcePath);
         var context = parse.Document is null ? new EvaluationContext() : new EvaluationContext(parse.Document);
-        return BuiltInConstants.RootConstants.Keys
+        var known = BuiltInConstants.RootConstants.Keys
             .Concat(context.Functions.Keys)
             .Concat(BuiltInConstants.NamedColors.Properties.Keys)
             .Concat(BuiltInConstants.Align.Properties.Keys)
+            .Concat(new[] { "variables", "layers", "output", "scripts" })
             .Concat(parse.Document?.Properties.Select(property => property.Name) ?? [])
             .Concat(LayerRendererRegistry.CreateDefault().RegisteredLayerTypes);
+
+        if (parse.Document is not null
+            && parse.Document.Properties.FirstOrDefault(p => p.Name == "variables") is { Value: ObjectBlockExpr varBlock })
+        {
+            known = known.Concat(varBlock.Properties.Select(p => p.Name));
+        }
+
+        return known;
     }
 
     private static EvaluationContext CreateEvaluationContext(
@@ -528,13 +567,85 @@ public static partial class GfxCli
         int runCount,
         int frameNumber,
         int frameCount,
-        double fps) =>
-        new(
+        double fps,
+        IReadOnlyDictionary<string, GfxValue>? variableOverrides = null)
+    {
+        var context = new EvaluationContext(
             document,
             new RunContext(runNumber, runCount, seedProvider.DeriveSeed(runNumber, 0, "__run__")),
             new FrameContext(frameNumber, frameCount, fps),
             seedProvider.CreateLayerRandom(runNumber, "__root__"),
             frameRandom: seedProvider.CreateRandom(runNumber, frameNumber, "__root__:frame"));
+
+        if (variableOverrides is not null)
+        {
+            foreach (var (k, v) in variableOverrides)
+            {
+                context.SetVariable(k, v);
+            }
+        }
+
+        return context;
+    }
+
+    private static bool TryParseVariableOverrides(
+        string[]? rawArgs,
+        out Dictionary<string, GfxValue> overrides,
+        out string? errorMessage)
+    {
+        overrides = new Dictionary<string, GfxValue>(StringComparer.Ordinal);
+        errorMessage = null;
+
+        if (rawArgs is null || rawArgs.Length == 0)
+        {
+            return true;
+        }
+
+        foreach (var item in rawArgs)
+        {
+            if (string.IsNullOrWhiteSpace(item))
+            {
+                continue;
+            }
+
+            var equalsIndex = item.IndexOf('=');
+            if (equalsIndex <= 0)
+            {
+                errorMessage = $"Invalid variable override '{item}'. Expected format is 'key=value'.";
+                return false;
+            }
+
+            var key = item[..equalsIndex].Trim();
+            var valExpr = item[(equalsIndex + 1)..].Trim();
+
+            if (string.IsNullOrEmpty(key))
+            {
+                errorMessage = $"Invalid variable name in override '{item}'.";
+                return false;
+            }
+
+            var evalResult = GfxEvaluator.EvaluateSource($"__var__ = {valExpr}\n");
+            if (!evalResult.HasErrors
+                && evalResult.Value is not null
+                && evalResult.Value.Properties.TryGetValue("__var__", out var evaluated))
+            {
+                if (evaluated is GfxSymbol symbol)
+                {
+                    overrides[key] = new GfxString(symbol.Identifier);
+                }
+                else
+                {
+                    overrides[key] = evaluated;
+                }
+            }
+            else
+            {
+                overrides[key] = new GfxString(valExpr);
+            }
+        }
+
+        return true;
+    }
 
     private static object? ToSerializableValue(GfxValue value) => value switch
     {

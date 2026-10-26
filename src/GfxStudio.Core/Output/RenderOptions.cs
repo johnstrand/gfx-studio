@@ -1,4 +1,4 @@
-namespace GfxStudio.Core.Output;
+﻿namespace GfxStudio.Core.Output;
 
 /// <summary>Per-job configuration and overrides for <see cref="GfxEngine"/>.</summary>
 public sealed class RenderOptions
@@ -20,4 +20,6 @@ public sealed class RenderOptions
     public int? MaxDegreeOfParallelism { get; init; }
 
     public string? AtlasMetadataFilename { get; init; }
+
+    public IReadOnlyDictionary<string, GfxStudio.Core.Evaluation.GfxValue>? VariableOverrides { get; init; }
 }

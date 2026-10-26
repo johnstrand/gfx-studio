@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using GfxStudio.Core.Diagnostics;
 using GfxStudio.Core.Evaluation;
 using GfxStudio.Core.Parsing;
@@ -117,7 +117,7 @@ public sealed class GfxEngine
             var frameNumber = isFrameAtlas ? ordinal : 0;
             var runCount = isFrameAtlas ? 1 : renderCount;
             var runSeed = seedProvider.DeriveSeed(runNumber, 0, "__run__");
-            var context = CreateContext(document, runNumber, runCount, runSeed, frameNumber, isFrameAtlas ? renderCount : 1, config.Fps, seedProvider);
+            var context = CreateContext(document, runNumber, runCount, runSeed, frameNumber, isFrameAtlas ? renderCount : 1, config.Fps, seedProvider, options);
             var evaluator = new GfxEvaluator(context, seedProvider);
             var filenameResult = evaluator.EvaluatePath("output.filename");
             var diagnostics = filenameResult.Diagnostics;
@@ -154,7 +154,7 @@ public sealed class GfxEngine
             var run = planned[ordinal];
             try
             {
-                var context = CreateContext(document, run.RunNumber, isFrameAtlas ? 1 : renderCount, run.RunSeed, isFrameAtlas ? ordinal : 0, isFrameAtlas ? renderCount : 1, config.Fps, seedProvider);
+                var context = CreateContext(document, run.RunNumber, isFrameAtlas ? 1 : renderCount, run.RunSeed, isFrameAtlas ? ordinal : 0, isFrameAtlas ? renderCount : 1, config.Fps, seedProvider, options);
                 var renderResult = _compositor.RenderDocument(context, seedProvider);
                 tiles[ordinal] = new TileResult(run.FullPath, run.SpriteSeed, renderResult.Bitmap, renderResult.Diagnostics);
             }
@@ -320,7 +320,7 @@ public sealed class GfxEngine
         var plannedPaths = new string[frameCount];
         for (var frameNumber = 0; frameNumber < frameCount; frameNumber++)
         {
-            var context = CreateContext(document, runNumber, 1, runSeed, frameNumber, frameCount, config.Fps, seedProvider);
+            var context = CreateContext(document, runNumber, 1, runSeed, frameNumber, frameCount, config.Fps, seedProvider, options);
             var evaluator = new GfxEvaluator(context, seedProvider);
             var filenameResult = evaluator.EvaluatePath("output.filename");
             if (filenameResult.HasErrors || filenameResult.Value is not GfxString filename || string.IsNullOrWhiteSpace(filename.Value))
@@ -343,7 +343,7 @@ public sealed class GfxEngine
             var frameSeed = seedProvider.DeriveSeed(runNumber, frameNumber, "__run__");
             try
             {
-                var context = CreateContext(document, runNumber, 1, runSeed, frameNumber, frameCount, config.Fps, seedProvider);
+                var context = CreateContext(document, runNumber, 1, runSeed, frameNumber, frameCount, config.Fps, seedProvider, options);
                 var renderResult = _compositor.RenderDocument(context, seedProvider);
                 tiles[frameNumber] = new TileResult(fullPath, frameSeed, renderResult.Bitmap, renderResult.Diagnostics);
             }
@@ -417,13 +417,26 @@ public sealed class GfxEngine
         int frameNumber,
         int frameCount,
         double fps,
-        DeterministicSeedProvider seedProvider) =>
-        new(
+        DeterministicSeedProvider seedProvider,
+        RenderOptions? options = null)
+    {
+        var context = new EvaluationContext(
             document,
             new RunContext(runNumber, runCount, runSeed),
             new FrameContext(frameNumber, frameCount, fps),
             seedProvider.CreateLayerRandom(runNumber, "__root__"),
             frameRandom: seedProvider.CreateRandom(runNumber, frameNumber, "__root__:frame"));
+
+        if (options?.VariableOverrides is not null)
+        {
+            foreach (var (k, v) in options.VariableOverrides)
+            {
+                context.SetVariable(k, v);
+            }
+        }
+
+        return context;
+    }
 
     private static string ResolveBaseDirectory(string sourceFilePath, string? outputDirectory)
     {
