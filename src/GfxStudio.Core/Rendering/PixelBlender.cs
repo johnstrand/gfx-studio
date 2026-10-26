@@ -46,8 +46,13 @@ public static class PixelBlender
             var dy = sy + offsetY;
             for (var sx = startX; sx < endX; sx++)
             {
-                var dx = sx + offsetX;
                 var srcColor = source.GetPixel(sx, sy);
+                if (srcColor.Alpha == 0)
+                {
+                    continue;
+                }
+
+                var dx = sx + offsetX;
                 var dstColor = destination.GetPixel(dx, dy);
 
                 var blended = BlendPixel(

@@ -1,4 +1,4 @@
-using GfxStudio.Core.Primitives;
+﻿using GfxStudio.Core.Primitives;
 using SkiaSharp;
 
 namespace GfxStudio.Core.Rendering.Effects;
@@ -113,36 +113,53 @@ public sealed class BevelEffect : ILayerEffect
         var height = target.Height;
         using var source = target.Copy();
 
-        for (var y = 0; y < height; y++)
+        unsafe
         {
-            for (var x = 0; x < width; x++)
+            var srcBase = (byte*)source.GetPixels().ToPointer();
+            var dstBase = (byte*)target.GetPixels().ToPointer();
+            var srcRowBytes = source.RowBytes;
+            var dstRowBytes = target.RowBytes;
+
+            Parallel.For(0, height, y =>
             {
-                var orig = source.GetPixel(x, y);
-                if (orig.Alpha == 0) continue;
+                var srcRow = srcBase + (y * srcRowBytes);
+                var dstRow = dstBase + (y * dstRowBytes);
 
-                var hPlus = GetHeightSample(source, x - dx, y - dy, width, height);
-                var hMinus = GetHeightSample(source, x + dx, y + dy, width, height);
-                var diff = (hMinus - hPlus) * strength;
-
-                if (Math.Abs(diff) > 1e-4)
+                for (var x = 0; x < width; x++)
                 {
-                    var tint = diff > 0.0 ? highlight : shadow;
-                    var t = Math.Clamp(Math.Abs(diff), 0.0, 1.0) * (tint.A / 255.0);
-                    var r = (byte)Math.Clamp(Math.Round(orig.Red + ((tint.R - orig.Red) * t)), 0, 255);
-                    var g = (byte)Math.Clamp(Math.Round(orig.Green + ((tint.G - orig.Green) * t)), 0, 255);
-                    var b = (byte)Math.Clamp(Math.Round(orig.Blue + ((tint.B - orig.Blue) * t)), 0, 255);
-                    target.SetPixel(x, y, new SKColor(r, g, b, orig.Alpha));
+                    var orig = srcRow + (x * 4);
+                    var alpha = orig[3];
+                    if (alpha == 0) continue;
+
+                    var hPlus = GetHeightSample(srcBase, srcRowBytes, x - dx, y - dy, width, height);
+                    var hMinus = GetHeightSample(srcBase, srcRowBytes, x + dx, y + dy, width, height);
+                    var diff = (hMinus - hPlus) * strength;
+
+                    if (Math.Abs(diff) > 1e-4)
+                    {
+                        var tint = diff > 0.0 ? highlight : shadow;
+                        var t = Math.Clamp(Math.Abs(diff), 0.0, 1.0) * (tint.A / 255.0);
+                        var r = (byte)Math.Clamp(Math.Round(orig[0] + ((tint.R - orig[0]) * t)), 0, 255);
+                        var g = (byte)Math.Clamp(Math.Round(orig[1] + ((tint.G - orig[1]) * t)), 0, 255);
+                        var b = (byte)Math.Clamp(Math.Round(orig[2] + ((tint.B - orig[2]) * t)), 0, 255);
+
+                        var dst = dstRow + (x * 4);
+                        dst[0] = r;
+                        dst[1] = g;
+                        dst[2] = b;
+                        dst[3] = alpha;
+                    }
                 }
-            }
+            });
         }
     }
 
-    private static double GetHeightSample(SKBitmap bmp, int x, int y, int w, int h)
+    private static unsafe double GetHeightSample(byte* srcBase, int srcRowBytes, int x, int y, int w, int h)
     {
         if (x < 0 || x >= w || y < 0 || y >= h) return 0.0;
-        var px = bmp.GetPixel(x, y);
-        var alpha = px.Alpha / 255.0;
-        var lum = ((0.299 * px.Red) + (0.587 * px.Green) + (0.114 * px.Blue)) / 255.0;
+        var px = srcBase + (y * srcRowBytes) + (x * 4);
+        var alpha = px[3] / 255.0;
+        var lum = ((0.299 * px[0]) + (0.587 * px[1]) + (0.114 * px[2])) / 255.0;
         return (alpha * 0.7) + (lum * alpha * 0.3);
     }
 }
@@ -581,25 +598,32 @@ public sealed class VignetteEffect : ILayerEffect
         var invRx = cx > 0 ? 1.0 / cx : 0.0;
         var invRy = cy > 0 ? 1.0 / cy : 0.0;
 
-        for (var y = 0; y < height; y++)
+        unsafe
         {
-            var dy = (y + 0.5 - cy) * invRy;
-            for (var x = 0; x < width; x++)
+            var targetBase = (byte*)target.GetPixels().ToPointer();
+            var targetRowBytes = target.RowBytes;
+
+            Parallel.For(0, height, y =>
             {
-                var orig = target.GetPixel(x, y);
-                if (orig.Alpha == 0) continue;
+                var dy = (y + 0.5 - cy) * invRy;
+                var tRow = targetBase + (y * targetRowBytes);
 
-                var dx = (x + 0.5 - cx) * invRx;
-                var dist = Math.Sqrt((dx * dx) + (dy * dy));
-                var t = Math.Clamp((dist - (radius - (softness * 0.5))) / softness, 0.0, 1.0);
-                // Smoothstep falloff
-                var smooth = t * t * (3.0 - (2.0 * t)) * intensity;
+                for (var x = 0; x < width; x++)
+                {
+                    var orig = tRow + (x * 4);
+                    if (orig[3] == 0) continue;
 
-                var r = (byte)Math.Clamp(Math.Round(orig.Red + ((vigColor.R - orig.Red) * smooth)), 0, 255);
-                var g = (byte)Math.Clamp(Math.Round(orig.Green + ((vigColor.G - orig.Green) * smooth)), 0, 255);
-                var b = (byte)Math.Clamp(Math.Round(orig.Blue + ((vigColor.B - orig.Blue) * smooth)), 0, 255);
-                target.SetPixel(x, y, new SKColor(r, g, b, orig.Alpha));
-            }
+                    var dx = (x + 0.5 - cx) * invRx;
+                    var dist = Math.Sqrt((dx * dx) + (dy * dy));
+                    var t = Math.Clamp((dist - (radius - (softness * 0.5))) / softness, 0.0, 1.0);
+                    // Smoothstep falloff
+                    var smooth = t * t * (3.0 - (2.0 * t)) * intensity;
+
+                    orig[0] = (byte)Math.Clamp(Math.Round(orig[0] + ((vigColor.R - orig[0]) * smooth)), 0, 255);
+                    orig[1] = (byte)Math.Clamp(Math.Round(orig[1] + ((vigColor.G - orig[1]) * smooth)), 0, 255);
+                    orig[2] = (byte)Math.Clamp(Math.Round(orig[2] + ((vigColor.B - orig[2]) * smooth)), 0, 255);
+                }
+            });
         }
     }
 }
@@ -628,46 +652,66 @@ public sealed class BloomEffect(string effectType = "bloom") : ILayerEffect
         using var brightPass = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
         brightPass.Erase(SKColors.Transparent);
 
-        for (var y = 0; y < height; y++)
+        unsafe
         {
-            for (var x = 0; x < width; x++)
+            var targetBase = (byte*)target.GetPixels().ToPointer();
+            var targetRowBytes = target.RowBytes;
+            var brightBase = (byte*)brightPass.GetPixels().ToPointer();
+            var brightRowBytes = brightPass.RowBytes;
+
+            Parallel.For(0, height, y =>
             {
-                var px = target.GetPixel(x, y);
-                var lum = EmbossEffect.GetLuminance(px);
-                if (lum > threshold)
+                var tRow = targetBase + (y * targetRowBytes);
+                var bRow = brightBase + (y * brightRowBytes);
+
+                for (var x = 0; x < width; x++)
                 {
-                    var factor = (lum - threshold) / Math.Max(1e-4, 1.0 - threshold);
-                    brightPass.SetPixel(x, y, new SKColor(
-                        (byte)Math.Round(px.Red * factor),
-                        (byte)Math.Round(px.Green * factor),
-                        (byte)Math.Round(px.Blue * factor),
-                        px.Alpha));
+                    var px = tRow + (x * 4);
+                    var lum = ((0.299 * px[0]) + (0.587 * px[1]) + (0.114 * px[2])) * (px[3] / 255.0) / 255.0;
+                    if (lum > threshold)
+                    {
+                        var factor = (lum - threshold) / Math.Max(1e-4, 1.0 - threshold);
+                        var bp = bRow + (x * 4);
+                        bp[0] = (byte)Math.Clamp(Math.Round(px[0] * factor), 0, 255);
+                        bp[1] = (byte)Math.Clamp(Math.Round(px[1] * factor), 0, 255);
+                        bp[2] = (byte)Math.Clamp(Math.Round(px[2] * factor), 0, 255);
+                        bp[3] = px[3];
+                    }
                 }
-            }
-        }
+            });
 
-        using var blurred = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
-        blurred.Erase(SKColors.Transparent);
-        using (var canvas = new SKCanvas(blurred))
-        using (var filter = SKImageFilter.CreateBlur((float)radius, (float)radius))
-        using (var paint = new SKPaint { ImageFilter = filter, IsAntialias = true })
-        {
-            canvas.DrawBitmap(brightPass, 0, 0, paint);
-            canvas.Flush();
-        }
-
-        for (var y = 0; y < height; y++)
-        {
-            for (var x = 0; x < width; x++)
+            using var blurred = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+            blurred.Erase(SKColors.Transparent);
+            using (var canvas = new SKCanvas(blurred))
+            using (var filter = SKImageFilter.CreateBlur((float)radius, (float)radius))
+            using (var paint = new SKPaint { ImageFilter = filter, IsAntialias = true })
             {
-                var orig = target.GetPixel(x, y);
-                var glow = blurred.GetPixel(x, y);
-                var r = (byte)Math.Clamp(Math.Round(orig.Red + (glow.Red * intensity)), 0, 255);
-                var g = (byte)Math.Clamp(Math.Round(orig.Green + (glow.Green * intensity)), 0, 255);
-                var b = (byte)Math.Clamp(Math.Round(orig.Blue + (glow.Blue * intensity)), 0, 255);
-                var a = (byte)Math.Clamp(Math.Max(orig.Alpha, (int)Math.Round(glow.Alpha * intensity)), 0, 255);
-                target.SetPixel(x, y, new SKColor(r, g, b, a));
+                canvas.DrawBitmap(brightPass, 0, 0, paint);
+                canvas.Flush();
             }
+
+            var blurBase = (byte*)blurred.GetPixels().ToPointer();
+            var blurRowBytes = blurred.RowBytes;
+
+            Parallel.For(0, height, y =>
+            {
+                var tRow = targetBase + (y * targetRowBytes);
+                var gRow = blurBase + (y * blurRowBytes);
+
+                for (var x = 0; x < width; x++)
+                {
+                    var orig = tRow + (x * 4);
+                    var glow = gRow + (x * 4);
+                    var r = (byte)Math.Clamp(Math.Round(orig[0] + (glow[0] * intensity)), 0, 255);
+                    var g = (byte)Math.Clamp(Math.Round(orig[1] + (glow[1] * intensity)), 0, 255);
+                    var b = (byte)Math.Clamp(Math.Round(orig[2] + (glow[2] * intensity)), 0, 255);
+                    var a = (byte)Math.Clamp(Math.Max((int)orig[3], (int)Math.Round(glow[3] * intensity)), 0, 255);
+                    orig[0] = r;
+                    orig[1] = g;
+                    orig[2] = b;
+                    orig[3] = a;
+                }
+            });
         }
     }
 }

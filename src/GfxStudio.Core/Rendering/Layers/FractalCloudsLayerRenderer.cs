@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using GfxStudio.Core.Evaluation;
 using GfxStudio.Core.Noise;
 using GfxStudio.Core.Primitives;
@@ -87,7 +87,7 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
 
         var pixelBuffer = new byte[width * height * 4];
 
-        for (var y = 0; y < height; y++)
+        Parallel.For(0, height, y =>
         {
             var sy = y - offsetY;
             var baseNy = sy * invHeight;
@@ -116,7 +116,7 @@ public sealed class FractalCloudsLayerRenderer : ILayerRenderer
 
                 WorleyLayerRenderer.WritePremulPixel(pixelBuffer, pixelIndex, sampled);
             }
-        }
+        });
 
         Marshal.Copy(pixelBuffer, 0, bitmap.GetPixels(), pixelBuffer.Length);
 

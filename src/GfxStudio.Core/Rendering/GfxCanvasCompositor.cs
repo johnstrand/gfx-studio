@@ -1,4 +1,4 @@
-using GfxStudio.Core.Diagnostics;
+﻿using GfxStudio.Core.Diagnostics;
 using GfxStudio.Core.Evaluation;
 using GfxStudio.Core.Parsing;
 using GfxStudio.Core.Parsing.Ast;
@@ -1030,7 +1030,7 @@ public sealed class GfxCanvasCompositor
             _ => null
         };
 
-    private static SKBitmap ExtractCanvasRegion(SKBitmap canvas, Point2D offset, Dimensions regionSize)
+    private static unsafe SKBitmap ExtractCanvasRegion(SKBitmap canvas, Point2D offset, Dimensions regionSize)
     {
         var region = new SKBitmap(new SKImageInfo(regionSize.Width, regionSize.Height, SKColorType.Rgba8888, SKAlphaType.Premul));
         region.Erase(SKColors.Transparent);
@@ -1038,52 +1038,60 @@ public sealed class GfxCanvasCompositor
         var ox = (int)Math.Round(offset.X);
         var oy = (int)Math.Round(offset.Y);
 
-        for (var y = 0; y < regionSize.Height; y++)
+        var startY = Math.Max(0, -oy);
+        var endY = Math.Min(regionSize.Height, canvas.Height - oy);
+        var startX = Math.Max(0, -ox);
+        var endX = Math.Min(regionSize.Width, canvas.Width - ox);
+
+        if (startX >= endX || startY >= endY)
+        {
+            return region;
+        }
+
+        var srcBase = (byte*)canvas.GetPixels().ToPointer();
+        var dstBase = (byte*)region.GetPixels().ToPointer();
+        var srcRowBytes = canvas.RowBytes;
+        var dstRowBytes = region.RowBytes;
+        var copyBytes = (ulong)((endX - startX) * 4);
+
+        for (var y = startY; y < endY; y++)
         {
             var cy = oy + y;
-            if (cy < 0 || cy >= canvas.Height)
-            {
-                continue;
-            }
-
-            for (var x = 0; x < regionSize.Width; x++)
-            {
-                var cx = ox + x;
-                if (cx < 0 || cx >= canvas.Width)
-                {
-                    continue;
-                }
-
-                region.SetPixel(x, y, canvas.GetPixel(cx, cy));
-            }
+            var src = srcBase + (cy * srcRowBytes) + ((ox + startX) * 4);
+            var dst = dstBase + (y * dstRowBytes) + (startX * 4);
+            Buffer.MemoryCopy(src, dst, copyBytes, copyBytes);
         }
 
         return region;
     }
 
-    private static void WriteRegionInPlace(SKBitmap canvas, SKBitmap region, Point2D offset)
+    private static unsafe void WriteRegionInPlace(SKBitmap canvas, SKBitmap region, Point2D offset)
     {
         var ox = (int)Math.Round(offset.X);
         var oy = (int)Math.Round(offset.Y);
 
-        for (var y = 0; y < region.Height; y++)
+        var startY = Math.Max(0, -oy);
+        var endY = Math.Min(region.Height, canvas.Height - oy);
+        var startX = Math.Max(0, -ox);
+        var endX = Math.Min(region.Width, canvas.Width - ox);
+
+        if (startX >= endX || startY >= endY)
+        {
+            return;
+        }
+
+        var srcBase = (byte*)region.GetPixels().ToPointer();
+        var dstBase = (byte*)canvas.GetPixels().ToPointer();
+        var srcRowBytes = region.RowBytes;
+        var dstRowBytes = canvas.RowBytes;
+        var copyBytes = (ulong)((endX - startX) * 4);
+
+        for (var y = startY; y < endY; y++)
         {
             var cy = oy + y;
-            if (cy < 0 || cy >= canvas.Height)
-            {
-                continue;
-            }
-
-            for (var x = 0; x < region.Width; x++)
-            {
-                var cx = ox + x;
-                if (cx < 0 || cx >= canvas.Width)
-                {
-                    continue;
-                }
-
-                canvas.SetPixel(cx, cy, region.GetPixel(x, y));
-            }
+            var src = srcBase + (y * srcRowBytes) + (startX * 4);
+            var dst = dstBase + (cy * dstRowBytes) + ((ox + startX) * 4);
+            Buffer.MemoryCopy(src, dst, copyBytes, copyBytes);
         }
     }
 
