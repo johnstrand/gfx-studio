@@ -135,6 +135,84 @@ public sealed class ImageAndTransformTests
         bmp.GetPixel(14, 8).Should().Be(new SKColor(0, 0, 0, 255));
     }
 
+    [Theory]
+    [InlineData("wrap_mode", "repeat", 0, 1, 0, 1)]
+    [InlineData("wrap", "repeat", 0, 1, 0, 1)]
+    [InlineData("wrap_mode", "mirror", 0, 1, 1, 0)]
+    [InlineData("wrap_mode", "clamp", 0, 1, 1, 1)]
+    public void LayerTransforms_WrapScaledLayersUsingConfiguredMode(
+        string propertyName,
+        string wrapMode,
+        byte expected0,
+        byte expected1,
+        byte expected2,
+        byte expected3)
+    {
+        var source = $$"""
+            layers = {
+              stripes = {
+                type = stripes
+                stripe_width = 2
+                angle = 0
+                color1 = NAMED_COLORS.RED
+                color2 = NAMED_COLORS.GREEN
+                scale = 0.5
+                anchor = { x = 0, y = 0 }
+                resample = nearest
+                {{propertyName}} = {{wrapMode}}
+              }
+            }
+            output = { dimensions = { width = 4, height = 1 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source, masterSeed: 1);
+
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+        var expectedColors = new[] { expected0, expected1, expected2, expected3 }
+            .Select(isGreen => isGreen == 0
+                ? new SKColor(255, 0, 0, 255)
+                : new SKColor(0, 255, 0, 255));
+        for (var x = 0; x < 4; x++)
+        {
+            result.Bitmap!.GetPixel(x, 0).Should().Be(expectedColors.ElementAt(x));
+        }
+    }
+
+    [Fact]
+    public void LayerTransforms_InvalidWrapMode_ReportsDiagnostic()
+    {
+        const string source = """
+            layers = {
+              stripes = {
+                type = stripes
+                wrap_mode = diagonal
+              }
+            }
+            output = { dimensions = { width = 4, height = 4 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source, masterSeed: 1);
+
+        result.Diagnostics.Should().ContainSingle(d => d.Code == "RND036" && d.Message.Contains("wrap_mode"));
+    }
+
+    [Fact]
+    public void LayerTransforms_PreserveBooleanWrapOnSpatialEffectLayers()
+    {
+        const string source = """
+            layers = {
+              background = { type = fill, color = NAMED_COLORS.WHITE }
+              distortion = { type = warp, wrap = true, strength = 0.5 }
+            }
+            output = { dimensions = { width = 4, height = 4 } }
+            """;
+
+        using var result = new GfxCanvasCompositor().RenderSource(source, masterSeed: 1);
+
+        result.HasErrors.Should().BeFalse(string.Join(Environment.NewLine, result.Diagnostics));
+        result.Diagnostics.Should().BeEmpty();
+    }
+
     [Fact]
     public void ImageLayer_ReusesCachedDecodedImageAcrossBatchRuns()
     {

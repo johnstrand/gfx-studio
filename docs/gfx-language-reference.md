@@ -300,8 +300,27 @@ layers = {
 All layers support `rotation` in degrees, `shear = { x, y }` (horizontal and vertical
 shear factors), and boolean `flip_x` / `flip_y` mirroring. `anchor` (or `pivot`) selects
 the transform origin: values where both coordinates are in `[0, 1]` are normalized to the
-layer size; other values are pixel coordinates. Transformed pixels outside the layer bitmap
-are clipped.
+layer size; other values are pixel coordinates. `wrap_mode` (or `wrap`) controls how transformed
+sampling continues beyond the layer edges:
+
+- `none` (default): preserve transparent/clipped areas outside the transformed layer.
+- `repeat`: tile the layer in both directions; useful with downscaled layers.
+- `mirror`: repeat tiles while alternating their horizontal and vertical orientation.
+- `clamp`: extend the nearest edge pixels.
+
+```gfx
+layers = {
+  texture = {
+    type = checkerboard
+    tile_size = 8
+    scale = 0.5
+    wrap_mode = mirror
+  }
+}
+```
+
+This layer-level `wrap_mode` is distinct from the boolean `wrap` option on spatial effects such
+as `warp` and `displace`. Prefer `wrap_mode` when using those effects, where `wrap` remains boolean.
 
 ---
 

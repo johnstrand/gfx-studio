@@ -50,6 +50,8 @@ public sealed class GfxCanvasCompositor
         "anchor",
         "pivot",
         "resample",
+        "wrap",
+        "wrap_mode",
         "effects"
     };
 
@@ -794,6 +796,25 @@ public sealed class GfxCanvasCompositor
         var (shearX, shearY) = ExtractLayerShear(layerProps, layerId, layerSpan, diagnostics);
         var flipX = ExtractLayerBoolean(layerProps, "flip_x", layerId, layerSpan, diagnostics);
         var flipY = ExtractLayerBoolean(layerProps, "flip_y", layerId, layerSpan, diagnostics);
+        var wrapMode = ExtractLayerWrapMode(layerProps, layerType, layerId, layerSpan, diagnostics);
+
+        if (wrapMode != LayerWrapMode.None)
+        {
+            return ApplyWrappedLayerTransform(
+                source,
+                layerProps,
+                layerId,
+                layerSpan,
+                diagnostics,
+                rotation,
+                scaleX,
+                scaleY,
+                shearX,
+                shearY,
+                flipX,
+                flipY,
+                wrapMode);
+        }
 
         if (Math.Abs(rotation) < 1e-5f
             && Math.Abs(scaleX - 1.0f) < 1e-5f
@@ -856,6 +877,201 @@ public sealed class GfxCanvasCompositor
         canvas.DrawBitmap(source, 0, 0, paint);
         canvas.Flush();
         return dest;
+    }
+
+    private static SKBitmap ApplyWrappedLayerTransform(
+        SKBitmap source,
+        GfxObject layerProps,
+        string layerId,
+        SourceSpan layerSpan,
+        List<GfxDiagnostic> diagnostics,
+        float rotation,
+        float scaleX,
+        float scaleY,
+        float shearX,
+        float shearY,
+        bool flipX,
+        bool flipY,
+        LayerWrapMode wrapMode)
+    {
+        var width = source.Width;
+        var height = source.Height;
+        var (anchorX, anchorY) = ExtractLayerAnchor(layerProps, width, height);
+        var finalScaleX = flipX ? -scaleX : scaleX;
+        var finalScaleY = flipY ? -scaleY : scaleY;
+        var radians = rotation * (Math.PI / 180.0);
+        var cos = Math.Cos(radians);
+        var sin = Math.Sin(radians);
+
+        // Match the transform order used by SKCanvas above: scale, shear, then rotate around the anchor.
+        var a = finalScaleX * (cos - (sin * shearY));
+        var b = finalScaleY * ((cos * shearX) - sin);
+        var c = finalScaleX * (sin + (cos * shearY));
+        var d = finalScaleY * ((sin * shearX) + cos);
+        var determinant = (a * d) - (b * c);
+        if (!double.IsFinite(determinant) || Math.Abs(determinant) < 1e-12)
+        {
+            diagnostics.Add(new GfxDiagnostic(
+                "RND036",
+                $"Layer '{layerId}' cannot use wrap_mode with a singular transform.",
+                layerSpan,
+                DiagnosticSeverity.Error));
+            var empty = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+            empty.Erase(SKColors.Transparent);
+            return empty;
+        }
+
+        var useNearest = layerProps.TryGetProperty("resample", out var resVal)
+            && ((resVal is GfxSymbol symbol && string.Equals(symbol.Identifier, "nearest", StringComparison.OrdinalIgnoreCase))
+                || (resVal is GfxString text && string.Equals(text.Value, "nearest", StringComparison.OrdinalIgnoreCase)));
+        var dest = new SKBitmap(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul));
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var dx = (x + 0.5) - anchorX;
+                var dy = (y + 0.5) - anchorY;
+                var sourceX = (((d * dx) - (b * dy)) / determinant) + anchorX;
+                var sourceY = (((-c * dx) + (a * dy)) / determinant) + anchorY;
+                dest.SetPixel(x, y, SampleWrappedPixel(source, sourceX, sourceY, wrapMode, useNearest));
+            }
+        }
+
+        return dest;
+    }
+
+    private static LayerWrapMode ExtractLayerWrapMode(
+        GfxObject layerProps,
+        string layerType,
+        string layerId,
+        SourceSpan layerSpan,
+        List<GfxDiagnostic> diagnostics)
+    {
+        var propertyName = "wrap_mode";
+        if (!layerProps.TryGetProperty("wrap_mode", out var value))
+        {
+            if (!layerProps.TryGetProperty("wrap", out value))
+            {
+                return LayerWrapMode.None;
+            }
+
+            // Preserve the boolean `wrap` option on standalone spatial-effect layers.
+            if (value is GfxBoolean)
+            {
+                if (layerType.Equals("warp", StringComparison.OrdinalIgnoreCase)
+                    || layerType.Equals("displace", StringComparison.OrdinalIgnoreCase))
+                {
+                    return LayerWrapMode.None;
+                }
+            }
+
+            propertyName = "wrap";
+        }
+
+        var modeName = value switch
+        {
+            GfxSymbol symbol => symbol.Identifier,
+            GfxString text => text.Value,
+            _ => string.Empty
+        };
+        var mode = modeName.ToLowerInvariant() switch
+        {
+            "none" => LayerWrapMode.None,
+            "repeat" => LayerWrapMode.Repeat,
+            "mirror" => LayerWrapMode.Mirror,
+            "clamp" => LayerWrapMode.Clamp,
+            _ => (LayerWrapMode)(-1)
+        };
+
+        if (Enum.IsDefined(mode))
+        {
+            return mode;
+        }
+
+        diagnostics.Add(new GfxDiagnostic(
+            "RND036",
+            $"Property '{propertyName}' on layer '{layerId}' must be one of: none, repeat, mirror, or clamp.",
+            layerSpan,
+            DiagnosticSeverity.Error));
+        return LayerWrapMode.None;
+    }
+
+    private static SKColor SampleWrappedPixel(
+        SKBitmap source,
+        double sourceX,
+        double sourceY,
+        LayerWrapMode wrapMode,
+        bool nearest)
+    {
+        if (nearest)
+        {
+            var x = WrapPixelIndex((int)Math.Floor(sourceX), source.Width, wrapMode);
+            var y = WrapPixelIndex((int)Math.Floor(sourceY), source.Height, wrapMode);
+            return source.GetPixel(x, y);
+        }
+
+        // Bitmap coordinates refer to pixel edges; shift to pixel-center coordinates for bilinear sampling.
+        var pixelX = sourceX - 0.5;
+        var pixelY = sourceY - 0.5;
+        var x0 = (int)Math.Floor(pixelX);
+        var y0 = (int)Math.Floor(pixelY);
+        var tx = pixelX - x0;
+        var ty = pixelY - y0;
+        var c00 = source.GetPixel(WrapPixelIndex(x0, source.Width, wrapMode), WrapPixelIndex(y0, source.Height, wrapMode));
+        var c10 = source.GetPixel(WrapPixelIndex(x0 + 1, source.Width, wrapMode), WrapPixelIndex(y0, source.Height, wrapMode));
+        var c01 = source.GetPixel(WrapPixelIndex(x0, source.Width, wrapMode), WrapPixelIndex(y0 + 1, source.Height, wrapMode));
+        var c11 = source.GetPixel(WrapPixelIndex(x0 + 1, source.Width, wrapMode), WrapPixelIndex(y0 + 1, source.Height, wrapMode));
+        return InterpolatePremultiplied(c00, c10, c01, c11, tx, ty);
+    }
+
+    private static int WrapPixelIndex(int index, int length, LayerWrapMode wrapMode)
+    {
+        if (wrapMode == LayerWrapMode.Clamp)
+        {
+            return Math.Clamp(index, 0, length - 1);
+        }
+
+        if (wrapMode == LayerWrapMode.Mirror)
+        {
+            var period = 2 * length;
+            var wrapped = ((index % period) + period) % period;
+            return wrapped < length ? wrapped : period - 1 - wrapped;
+        }
+
+        return ((index % length) + length) % length;
+    }
+
+    private static SKColor InterpolatePremultiplied(SKColor c00, SKColor c10, SKColor c01, SKColor c11, double tx, double ty)
+    {
+        static double Bilinear(double v00, double v10, double v01, double v11, double x, double y) =>
+            ((v00 * (1.0 - x)) + (v10 * x)) * (1.0 - y)
+            + ((v01 * (1.0 - x)) + (v11 * x)) * y;
+
+        var a00 = c00.Alpha / 255.0;
+        var a10 = c10.Alpha / 255.0;
+        var a01 = c01.Alpha / 255.0;
+        var a11 = c11.Alpha / 255.0;
+        var alpha = Bilinear(c00.Alpha, c10.Alpha, c01.Alpha, c11.Alpha, tx, ty);
+        if (alpha <= 0.0)
+        {
+            return SKColors.Transparent;
+        }
+
+        var alphaFraction = alpha / 255.0;
+        var red = Bilinear(c00.Red * a00, c10.Red * a10, c01.Red * a01, c11.Red * a11, tx, ty) / alphaFraction;
+        var green = Bilinear(c00.Green * a00, c10.Green * a10, c01.Green * a01, c11.Green * a11, tx, ty) / alphaFraction;
+        var blue = Bilinear(c00.Blue * a00, c10.Blue * a10, c01.Blue * a01, c11.Blue * a11, tx, ty) / alphaFraction;
+        return new SKColor(ToByte(red), ToByte(green), ToByte(blue), ToByte(alpha));
+
+        static byte ToByte(double value) => (byte)Math.Clamp((int)Math.Round(value), 0, 255);
+    }
+
+    private enum LayerWrapMode
+    {
+        None,
+        Repeat,
+        Mirror,
+        Clamp
     }
 
     private static (float X, float Y) ExtractLayerShear(
